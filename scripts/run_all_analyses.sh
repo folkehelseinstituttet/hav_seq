@@ -219,7 +219,7 @@ if [[ "$IS_SANGER" -eq 1 ]]; then
 fi
 
 # ── Analysis 1: BLAST ─────────────────────────────────────────────────────────
-echo "▶ Step 1/2: BLAST"
+echo "▶ Step 1/5: BLAST"
 echo "─────────────────────────────────────────────────────────────────"
 
 # blast_batch.sh writes directly to OUT_BASE
@@ -228,7 +228,7 @@ bash scripts/blast_batch.sh "$ANALYSIS_FA" "$DATASET_DATE" "$DATASET_DIR" "$OUT_
 echo ""
 
 # ── Analysis 2: NextClade (lineages dataset) ──────────────────────────────────
-echo "▶ Step 2/2: NextClade — lineages dataset (clade + lineage_phylo)"
+echo "▶ Step 2/5: NextClade — lineages dataset (clade + lineage_phylo)"
 echo "─────────────────────────────────────────────────────────────────"
 LINEAGES_OUT="$OUT_BASE/lineages"
 mkdir -p "$LINEAGES_OUT"
@@ -252,15 +252,24 @@ echo "  Sequences processed: $N_SEQS"
 echo ""
 
 # ── Analysis 3: Per-sequence trees ────────────────────────────────────────────
-echo "▶ Step 3/3: Per-sequence trees (IQ-TREE with nearest neighbors)"
+echo "▶ Step 3/5: Per-sequence trees (IQ-TREE with nearest neighbors)"
 echo "─────────────────────────────────────────────────────────────────"
 # Pass arguments directly to preserve spaces in paths
 bash scripts/build_per_seq_trees.sh "$BATCH_DIR" "$DATASET_DATE" 30 "$OUT_BASE" "$DATASET_DIR" "$BATCH_FA"
 echo "  Results → $OUT_BASE/trees/"
 echo ""
 
-# ── Analysis 4: Batch report ──────────────────────────────────────────────────
-echo "▶ Step 4/4: Generate batch report (HTML)"
+# ── Analysis 4: Batch-specific phylogenetics ─────────────────────────────────
+echo "▶ Step 4/5: Batch-specific trees and SNP matrices"
+echo "─────────────────────────────────────────────────────────────────"
+# Pass arguments directly to preserve spaces in paths
+bash scripts/build_batch_analysis.sh "$BATCH_DIR" "$DATASET_DATE" "$OUT_BASE"
+echo "  Results → $OUT_BASE/trees/batch/"
+echo "  SNP matrix → $OUT_BASE/snp_matrices/batch_snp_distances.tsv"
+echo ""
+
+# ── Analysis 5: Batch report ──────────────────────────────────────────────────
+echo "▶ Step 5/5: Generate batch report (HTML)"
 echo "─────────────────────────────────────────────────────────────────"
 
 REPORT_OUTPUT="$OUT_BASE/batch_report.html"
@@ -288,10 +297,12 @@ echo ""
 echo "════════════════════════════════════════════════════════════════"
 echo "All analyses complete for $BATCH_NAME"
 echo ""
-echo "  BLAST results       : $OUT_BASE/blast_results.tsv"
-echo "  NC lineages (FHI)   : $LINEAGES_OUT/nextclade.tsv"
-echo "  Per-sequence trees  : $OUT_BASE/trees/"
-echo "  Batch report        : $REPORT_OUTPUT"
+echo "  BLAST results            : $OUT_BASE/blast_results.tsv"
+echo "  NC lineages (FHI)        : $LINEAGES_OUT/nextclade.tsv"
+echo "  Per-sequence trees       : $OUT_BASE/trees/"
+echo "  Batch phylogenetic tree  : $OUT_BASE/trees/batch/tree.treefile"
+echo "  Batch SNP matrix         : $OUT_BASE/snp_matrices/batch_snp_distances.tsv"
+echo "  Batch report             : $REPORT_OUTPUT"
 echo "════════════════════════════════════════════════════════════════"
 
 
