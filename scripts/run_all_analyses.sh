@@ -32,13 +32,18 @@
 #                  (assigns genotype `clade` + lineage information)
 #   3. Per-sequence trees — builds IQ-TREE phylogenetic trees for each query
 #                  (using nearest neighbors from BLAST and NextClade)
-#   4. Batch report — generates interactive HTML report with visualizations
+#   4. Batch analysis — batch phylogenetic trees and SNP matrices
+#   5. Outbreak trees — generates phylogenetic trees combining batch + database sequences
+#   6. Batch report — generates interactive HTML report with visualizations
 #
 # Writes to <out_base>/:
 #   blast_results.tsv
 #   lineages/nextclade.tsv  (+ aligned fasta, json, ndjson)
 #   lineages/nextclade.auspice.json
 #   trees/<seqName>/*  (per-sequence tree artifacts)
+#   trees/batch/*  (batch tree artifacts)
+#   snp_matrices/batch_snp_distances.tsv
+#   outbreak_trees/  (PNG images of outbreak lineage trees)
 #   batch_report.html  (interactive HTML report)
 #
 # Prerequisites:
@@ -228,7 +233,7 @@ bash scripts/blast_batch.sh "$ANALYSIS_FA" "$DATASET_DATE" "$DATASET_DIR" "$OUT_
 echo ""
 
 # ── Analysis 2: NextClade (lineages dataset) ──────────────────────────────────
-echo "▶ Step 2/5: NextClade — lineages dataset (clade + lineage_phylo)"
+echo "▶ Step 2/6: NextClade — lineages dataset (clade + lineage_phylo)"
 echo "─────────────────────────────────────────────────────────────────"
 LINEAGES_OUT="$OUT_BASE/lineages"
 mkdir -p "$LINEAGES_OUT"
@@ -252,7 +257,7 @@ echo "  Sequences processed: $N_SEQS"
 echo ""
 
 # ── Analysis 3: Per-sequence trees ────────────────────────────────────────────
-echo "▶ Step 3/5: Per-sequence trees (IQ-TREE with nearest neighbors)"
+echo "▶ Step 3/6: Per-sequence trees (IQ-TREE with nearest neighbors)"
 echo "─────────────────────────────────────────────────────────────────"
 # Pass arguments directly to preserve spaces in paths
 bash scripts/build_per_seq_trees.sh "$BATCH_DIR" "$DATASET_DATE" 30 "$OUT_BASE" "$DATASET_DIR" "$BATCH_FA"
@@ -260,7 +265,7 @@ echo "  Results → $OUT_BASE/trees/"
 echo ""
 
 # ── Analysis 4: Batch-specific phylogenetics ─────────────────────────────────
-echo "▶ Step 4/5: Batch-specific trees and SNP matrices"
+echo "▶ Step 4/6: Batch-specific trees and SNP matrices"
 echo "─────────────────────────────────────────────────────────────────"
 # Pass arguments directly to preserve spaces in paths
 bash scripts/build_batch_analysis.sh "$BATCH_DIR" "$DATASET_DATE" "$OUT_BASE"
@@ -268,8 +273,18 @@ echo "  Results → $OUT_BASE/trees/batch/"
 echo "  SNP matrix → $OUT_BASE/snp_matrices/batch_snp_distances.tsv"
 echo ""
 
-# ── Analysis 5: Batch report ──────────────────────────────────────────────────
-echo "▶ Step 5/5: Generate batch report (HTML)"
+# ── Analysis 5: Outbreak-specific phylogenetics ────────────────────────────────
+echo "▶ Step 5/6: Outbreak lineage trees (batch + database sequences)"
+echo "─────────────────────────────────────────────────────────────────"
+# Pass arguments directly to preserve spaces in paths
+"$HOME/.conda/R_shared/bin/Rscript" scripts/build_outbreak_trees.R "$OUT_BASE" "$DATASET_DATE" "$DATASET_DIR" || {
+  echo "WARNING: Outbreak tree generation failed (report will not include lineage trees)"
+}
+echo "  Results → $OUT_BASE/outbreak_trees/"
+echo ""
+
+# ── Analysis 6: Batch report ──────────────────────────────────────────────────
+echo "▶ Step 6/6: Generate batch report (HTML)"
 echo "─────────────────────────────────────────────────────────────────"
 
 REPORT_OUTPUT="$OUT_BASE/batch_report.html"
@@ -302,6 +317,7 @@ echo "  NC lineages (FHI)        : $LINEAGES_OUT/nextclade.tsv"
 echo "  Per-sequence trees       : $OUT_BASE/trees/"
 echo "  Batch phylogenetic tree  : $OUT_BASE/trees/batch/tree.treefile"
 echo "  Batch SNP matrix         : $OUT_BASE/snp_matrices/batch_snp_distances.tsv"
+echo "  Outbreak lineage trees   : $OUT_BASE/outbreak_trees/"
 echo "  Batch report             : $REPORT_OUTPUT"
 echo "════════════════════════════════════════════════════════════════"
 
