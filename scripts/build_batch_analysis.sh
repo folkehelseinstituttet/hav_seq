@@ -114,12 +114,15 @@ for seq_id in $BATCH_SEQS; do
     fi
     
     echo "  ✓ Found alignment file"
+    echo "  → Starting extraction..."
     
     # Temporarily disable pipefail for sequence extraction
     set +o pipefail
     
     # Extract first FASTA sequence using awk
     # Print renamed header on first line, then all sequence lines until next header
+    echo "  → Running extraction command..."
+    
     awk -v seqid="$seq_id" '
         /^>/ {
             if (first_header_seen) exit
@@ -131,6 +134,8 @@ for seq_id in $BATCH_SEQS; do
     ' "$SEQ_ALN_FILE" >> "$BATCH_ALIGN_TMP" 2>&1
     
     EXTRACT_EXIT=$?
+    echo "  → Extraction exited with code: $EXTRACT_EXIT"
+    
     set -o pipefail
     
     if [[ $EXTRACT_EXIT -ne 0 ]]; then
@@ -138,16 +143,25 @@ for seq_id in $BATCH_SEQS; do
         continue
     fi
     
+    echo "  → Verifying sequence was added..."
+    
     # Verify sequence was added
     CURRENT_SEQ_COUNT=$(grep -c "^>" "$BATCH_ALIGN_TMP" 2>/dev/null || echo 0)
+    echo "  → Sequence count in file: $CURRENT_SEQ_COUNT (previously: $ALIGN_COUNT)"
+    
     if [[ $CURRENT_SEQ_COUNT -gt $ALIGN_COUNT ]]; then
-        ((ALIGN_COUNT++))
+        echo "  → Count increased, incrementing counter..."
+        ALIGN_COUNT=$((ALIGN_COUNT + 1))
+        echo "  → New count: $ALIGN_COUNT"
         echo "  ✓ Extracted sequence ($ALIGN_COUNT total)"
     else
-        echo "  ✗ Sequence count not increased (may indicate empty extraction)"
+        echo "  ✗ Sequence count not increased"
     fi
+    echo "  → Done processing $seq_id"
 done
 
+echo ""
+echo "==================== Loop Complete ===================="
 echo "Extracted $ALIGN_COUNT sequences into batch alignment"
 echo ""
 
@@ -198,11 +212,15 @@ rm -f "$BATCH_ALIGN_TMP"
 echo ""
 echo "Step 3: Building phylogenetic tree with IQ-TREE..."
 
+# Clean up old checkpoint files from previous runs to avoid conflicts
+rm -f "$BATCH_ALIGN_ALIGNED.ckp.gz" "$BATCH_ALIGN_ALIGNED.ckp"
+
 iqtree \
     -s "$BATCH_ALIGN_ALIGNED" \
     -m JC \
     -nt AUTO \
     -fast \
+    -redo \
     -quiet
 
 echo "Tree files written to: $BATCH_TREES/"
