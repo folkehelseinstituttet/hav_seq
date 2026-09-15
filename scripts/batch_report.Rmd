@@ -1136,7 +1136,7 @@ triage_tbl %>%
     } else {
       length_val <- as.numeric(.)
       if (!is.na(length_val) && length_val != 460) {
-        "#ffeb3b"  # Yellow for non-460 lengths
+        "rgb(230, 218, 111)"  # Light yellow for non-460 lengths
       } else {
         ""
       }
@@ -2009,7 +2009,7 @@ for (i in seq_along(query_ids)) {
       var_pos <- pos_cov[var_cols]
 
       # ── Panel E: Top informative zoom windows ─────────────────────────────
-      cat("**Panel E. Zoomed informative windows**\n\n")
+      cat("**Zoomed informative windows**\n\n")
       cat("*Figure legend:* Top informative windows selected by combined entropy/SNP/gap signal; tiles show consensus-relative state and nucleotide letter. Query sequence is marked with ★. The alignment includes the query sequence, BLAST top hits from the local database, and selected reference sequences. Sample selection criteria: top BLAST hits by SNP distance, plus NextClade community reference sequences.\n\n")
       
       # Define color palette for alignment states
@@ -2353,20 +2353,20 @@ if (length(batch_seqs_in_alignment) < 2) {
   
   cat("## Batch SNP distance heatmap\n\n")
   
-  # Try to build batch SNP distance matrix from data
-  batch_seqs_data <- tibble()
+  batch_snp_file <- file.path(params$out_base, "snp_matrices", "batch_snp_distances.tsv")
+  batch_snp_mat <- NULL
   
-  # Option 1: Use pre-computed batch alignment if available
-  if (batch_aln_available) {
-    batch_seqs_data <- tryCatch({
-      seqs <- ape::read.dna(batch_aln_file_blast, format = "fasta", as.character = TRUE)
-      as_tibble(seqs, rownames = "id")
-    }, error = function(e) tibble())
+  # Option 1: Use pre-computed SNP matrix from build_batch_analysis.sh
+  if (file.exists(batch_snp_file)) {
+    batch_snp_mat <- tryCatch({
+      mat <- read.delim(batch_snp_file, row.names = 1, check.names = FALSE)
+      as.matrix(mat)
+    }, error = function(e) NULL)
   }
   
-  # Option 2: Build from per-sequence blast-only alignments
-  if (nrow(batch_seqs_data) == 0 && length(batch_seqs_in_alignment) >= 2) {
-    batch_aln_from_seqs <- tibble()
+  # Option 2: Build from per-sequence blast-only alignments (fallback)
+  if (is.null(batch_snp_mat)) {
+    batch_seqs_data <- tibble()
     
     for (seq_id in batch_seqs_in_alignment) {
       seq_aln_file <- file.path(trees_dir, seq_id, "aligned_trimmed_blast_only.fa")
@@ -2377,40 +2377,37 @@ if (length(batch_seqs_in_alignment) < 2) {
             # Get first row (query sequence)
             query_seq <- aln[1, , drop = FALSE]
             rownames(query_seq) <- seq_id
-            batch_aln_from_seqs <- rbind(batch_aln_from_seqs, as_tibble(query_seq, rownames = "id"))
+            batch_seqs_data <- rbind(batch_seqs_data, as_tibble(query_seq, rownames = "id"))
           }
         }, error = function(e) NULL)
       }
     }
     
-    if (nrow(batch_aln_from_seqs) > 0) {
-      batch_seqs_data <- batch_aln_from_seqs
+    # Compute SNP distance matrix if we have sequences
+    if (nrow(batch_seqs_data) >= 2) {
+      batch_seqs_mat <- as.matrix(batch_seqs_data %>% select(-id))
+      rownames(batch_seqs_mat) <- batch_seqs_data$id
+      
+      n_batch <- nrow(batch_seqs_mat)
+      batch_snp_mat <- matrix(0L, n_batch, n_batch, dimnames = list(rownames(batch_seqs_mat), rownames(batch_seqs_mat)))
+      
+      for (i in seq_len(n_batch - 1)) {
+        for (j in (i + 1):n_batch) {
+          s1 <- batch_seqs_mat[i, ]
+          s2 <- batch_seqs_mat[j, ]
+          valid <- s1 != "-" & s2 != "-" & !is.na(s1) & !is.na(s2)
+          d <- sum(s1[valid] != s2[valid])
+          batch_snp_mat[i, j] <- batch_snp_mat[j, i] <- d
+        }
+      }
     }
   }
   
-  # Compute SNP distance matrix if we have sequences
-  if (nrow(batch_seqs_data) >= 2) {
-    # Convert to matrix format (character matrix for SNP calculation)
-    batch_seqs_mat <- as.matrix(batch_seqs_data %>% select(-id))
-    rownames(batch_seqs_mat) <- batch_seqs_data$id
-    
-    n_batch <- nrow(batch_seqs_mat)
-    batch_snp_mat <- matrix(0L, n_batch, n_batch, dimnames = list(rownames(batch_seqs_mat), rownames(batch_seqs_mat)))
-    
-    # Calculate pairwise SNP distances
-    for (i in seq_len(n_batch - 1)) {
-      for (j in (i + 1):n_batch) {
-        s1 <- batch_seqs_mat[i, ]
-        s2 <- batch_seqs_mat[j, ]
-        valid <- s1 != "-" & s2 != "-" & !is.na(s1) & !is.na(s2)
-        d <- sum(s1[valid] != s2[valid])
-        batch_snp_mat[i, j] <- batch_snp_mat[j, i] <- d
-      }
-    }
-    
-    batch_lbl <- rownames(batch_seqs_mat)
+  # Display SNP heatmap if we have matrix
+  if (!is.null(batch_snp_mat)) {
+    batch_lbl <- rownames(batch_snp_mat)
     batch_ann_row <- data.frame(
-      Type = rep("Batch", n_batch),
+      Type = rep("Batch", nrow(batch_snp_mat)),
       row.names = batch_lbl
     )
     batch_ann_colors <- list(Type = c(Batch = "#aec7e8"))
@@ -2450,48 +2447,97 @@ if (length(batch_seqs_in_alignment) < 2) {
 # 7. Outbreak detection
 
 ```{r outbreak-detection, results='asis'}
-# Extract base lineage (NOR-YYYY-Vnn) without b/c/d suffixes for grouping
-# This allows V6, V6a, V6b to be grouped together as a single outbreak unit
-extract_base_lineage <- function(lineage) {
-  ifelse(is.na(lineage), NA_character_, sub("[a-z]$", "", lineage))
+# ── Helper function for displaying images with lightbox ───────────────────────
+.embed_img <- function(path) {
+  if (!file.exists(path)) {
+    cat(sprintf("*(Image file not found: %s)*\n", basename(path)))
+    return()
+  }
+  cat(sprintf(
+    '<img src="%s" onclick="document.getElementById(\'tree-lightbox-img\').src=this.src; var lb=document.getElementById(\'tree-lightbox\'); lb.style.display=\'flex\';" style="width:100%%; cursor:zoom-in; border:1px solid #ddd; border-radius:4px; margin-bottom:12px;" title="Click to enlarge"/>\n',
+    knitr::image_uri(path)
+  ))
 }
 
-# Identify ALL batch lineages (regardless of count)
-batch_lineage_data <- summary_tbl %>%
-  filter(!is.na(blast_lineage)) %>%
-  mutate(base_lineage = extract_base_lineage(blast_lineage)) %>%
-  group_by(base_lineage) %>%
+# Load BLAST results to identify which variants batch sequences match
+# Variants come from database lineage assignments
+blast_data <- read_tsv(
+  file.path(params$out_base, "blast_results.tsv"),
+  col_names = c("qseqid", "sseqid", "pident", "length", "mismatch", "gapopen",
+                "qstart", "qend", "sstart", "send", "evalue", "bitscore"),
+  col_types = "ccddddiiiidd",
+  show_col_types = FALSE
+)
+
+# Define robust ID normalization
+norm_id <- function(x) {
+  x <- iconv(x, to = "UTF-8", sub = "")
+  x <- tolower(x)
+  gsub("[-_]", "", x, perl = TRUE)
+}
+
+# Extract base variant (remove trailing a/b/c/d suffixes)
+extract_base_variant <- function(variant) {
+  ifelse(is.na(variant), NA_character_, sub("[a-z]$", "", variant))
+}
+
+# Identify batch variants:
+# For each batch sequence, get best BLAST hit (first row, sorted by score)
+# Then look up the variant/lineage from database metadata
+# Group by BASE variant (removing sub-variant suffixes like a/b/c)
+batch_variants <- blast_data %>%
+  select(qseqid, sseqid) %>%
+  group_by(qseqid) %>%
+  slice(1) %>%
+  ungroup() %>%
+  # Normalize IDs for matching with metadata
+  mutate(sseqid_norm = norm_id(sseqid)) %>%
+  left_join(
+    meta %>%
+      filter(!is.na(lineage)) %>%
+      mutate(id_norm = norm_id(id)) %>%
+      select(id_norm, lineage),
+    by = c("sseqid_norm" = "id_norm")
+  ) %>%
+  select(seqName = qseqid, variant = lineage) %>%
+  filter(!is.na(variant)) %>%
+  # Group by base variant
+  mutate(base_variant = extract_base_variant(variant))
+
+# Group by base variant
+batch_variant_summary <- batch_variants %>%
+  group_by(base_variant) %>%
   summarise(
     n_batch = n(),
-    variants_in_batch = paste(sort(unique(blast_lineage)), collapse = ", "),
     batch_seqs = paste(sort(unique(seqName)), collapse = ", "),
     .groups = "drop"
-  )
-
-# Get all lineages from batch (all base_lineages present in batch)
-outbreak_candidates <- batch_lineage_data %>%
-  select(base_lineage, n_batch, variants_in_batch, batch_seqs)
+  ) %>%
+  rename(lineage = base_variant)
 
 # Add database counts for context
 if (nrow(meta) > 0 && "lineage" %in% names(meta)) {
-  db_lineage_data <- meta %>%
+  db_variant_summary <- meta %>%
     filter(!is.na(lineage)) %>%
-    mutate(base_lineage = extract_base_lineage(lineage)) %>%
-    group_by(base_lineage) %>%
+    mutate(base_variant = extract_base_variant(lineage)) %>%
+    group_by(base_variant) %>%
     summarise(
       n_db = n(),
-      variants_in_db = paste(sort(unique(lineage)), collapse = ", "),
       .groups = "drop"
     )
   
-  outbreak_candidates <- outbreak_candidates %>%
-    left_join(db_lineage_data, by = "base_lineage") %>%
+  outbreak_candidates <- batch_variant_summary %>%
+    left_join(db_variant_summary, by = c("lineage" = "base_variant")) %>%
     mutate(
       n_db = replace_na(n_db, 0L),
-      variants_in_db = replace_na(variants_in_db, "—"),
       n_total = n_batch + n_db
     ) %>%
-    select(base_lineage, n_batch, variants_in_batch, n_db, variants_in_db, n_total, batch_seqs)
+    rename(base_lineage = lineage) %>%
+    select(base_lineage, n_batch, n_db, n_total, batch_seqs)
+} else {
+  outbreak_candidates <- batch_variant_summary %>%
+    mutate(n_db = 0L, n_total = n_batch) %>%
+    rename(base_lineage = lineage) %>%
+    select(base_lineage, n_batch, n_db, n_total, batch_seqs)
 }
 
 if (nrow(outbreak_candidates) == 0) {
@@ -2499,78 +2545,91 @@ if (nrow(outbreak_candidates) == 0) {
 } else {
   cat(sprintf("**Lineages in batch:** %d lineage group(s) identified\n\n", nrow(outbreak_candidates)))
   
-  # Summary table with wider Base Lineage column
+  # Summary table 
   cat("**Lineage overview:**\n\n")
   outbreak_display <- outbreak_candidates %>%
     select(
-      `Base Lineage` = base_lineage,
+      `Lineage` = base_lineage,
       `Batch (n)` = n_batch,
-      `Batch variants` = variants_in_batch,
-      `DB (n)` = n_db,
-      `DB variants` = variants_in_db
+      `Database (n)` = n_db,
+      `Total` = n_total
     )
   
   cat(outbreak_display %>%
         kbl() %>%
         kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
-        column_spec(1, width = "16em") %>%  # Wider Base Lineage column
         as.character())
   cat("\n\n")
-  cat("**Phylogenetic trees by lineage:**\n\n")
   
-  # Generate phylogenetic trees for each lineage (includes both batch and database sequences)
-  for (i in seq_len(nrow(outbreak_candidates))) {
-    outbreak_lineage <- outbreak_candidates$base_lineage[i]
-    batch_seqs_list <- str_split(outbreak_candidates$batch_seqs[i], ", ")[[1]]
-    n_batch_seqs <- length(batch_seqs_list)
+  # Create tabset structure for outbreak trees (display pre-generated PNG images)
+  cat("**Phylogenetic trees by lineage {.tabset}**\n\n")
+  cat("## {.unlisted .unnumbered}\n\n")
+  
+  # Check if outbreak_trees directory exists with PNG files
+  outbreak_trees_dir <- file.path(params$out_base, "outbreak_trees")
+  
+  if (dir.exists(outbreak_trees_dir)) {
+    png_files <- list.files(outbreak_trees_dir, pattern = "\\.png$", full.names = TRUE)
+    png_files <- sort(png_files)  # Sort alphabetically
     
-    cat(sprintf("### %s\n\n", outbreak_lineage))
-    cat(sprintf("**Batch samples:** %d | **Database samples:** %d\n\n",
-                n_batch_seqs, outbreak_candidates$`DB (n)`[i]))
-    
-    # Get all database sequences for this lineage
-    db_seqs_for_lineage <- meta %>%
-      filter(!is.na(lineage)) %>%
-      mutate(base_lin = extract_base_lineage(lineage)) %>%
-      filter(base_lin == outbreak_lineage) %>%
-      pull(lineage) %>%
-      unique()
-    
-    cat("To generate phylogenetic tree with all batch and database sequences of this lineage:\n\n")
+    if (length(png_files) > 0) {
+      # Create tabs for each PNG file
+      for (png_path in png_files) {
+        variant_name <- sub("\\.png$", "", basename(png_path))
+        
+        # Get batch and DB sequence counts for this lineage
+        lineage_row <- outbreak_candidates %>%
+          filter(base_lineage == variant_name)
+        
+        n_batch_seqs <- if (nrow(lineage_row) > 0) lineage_row$n_batch[1] else 0
+        n_db_seqs <- if (nrow(lineage_row) > 0) lineage_row$`Database (n)`[1] else 0
+        
+        # Create tab header
+        cat(sprintf("\n## %s\n\n", variant_name))
+        cat(sprintf("**Batch samples:** %d | **Database samples:** %d\n\n",
+                    n_batch_seqs, n_db_seqs))
+        
+        # Embed pre-generated PNG image
+        .embed_img(png_path)
+        cat("\n\n")
+        
+        # Show database sequences with this variant
+        db_seqs_for_variant <- meta %>%
+          filter(!is.na(lineage)) %>%
+          mutate(base_var = extract_base_variant(lineage)) %>%
+          filter(base_var == variant_name) %>%
+          select(id, lineage, genotype, date)
+        
+        if (nrow(db_seqs_for_variant) > 0) {
+          cat("**Database sequences with this variant:**\n\n")
+          db_display <- db_seqs_for_variant %>%
+            select(
+              `ID` = id,
+              `Variant` = lineage,
+              `Genotype` = genotype,
+              `Date` = date
+            )
+          cat(db_display %>%
+                kbl() %>%
+                kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
+                as.character())
+          cat("\n\n")
+        }
+      }
+    } else {
+      cat("*Outbreak tree images were not generated. Run:*\n\n")
+      cat("```bash\n")
+      cat(sprintf("Rscript scripts/build_outbreak_trees.R '%s' '%s' '%s'\n",
+                  params$out_base, params$dataset_date, params$dataset_dir))
+      cat("```\n\n")
+    }
+  } else {
+    cat("*Outbreak tree images not found. Run the outbreak trees generation step:*\n\n")
     cat("```bash\n")
-    
-    # Build command to extract batch seqs from per-sequence trees
-    cat(sprintf("# Create %s-specific alignment\n", outbreak_lineage))
-    cat(sprintf("mkdir -p '%s/outbreaks'\n", out_dir))
-    
-    # Extract batch sequences + their BLAST hits (database sequences)
-    for (seq_name in batch_seqs_list) {
-      seq_aln_file <- file.path(trees_dir, seq_name, "aligned_trimmed_blast_only.fa")
-      cat(sprintf("# Extract %s + database hits\n", seq_name))
-      cat(sprintf("cat '%s' | sed 's/^>/>%s_/' >> '%s/outbreaks/%s_input.fa'\n",
-                  seq_aln_file, seq_name, out_dir, outbreak_lineage))
-    }
-    
-    # Align with MAFFT
-    cat(sprintf("\n# Align all sequences\n"))
-    cat(sprintf("mafft --auto '%s/outbreaks/%s_input.fa' > '%s/outbreaks/%s_aligned.fa'\n",
-                out_dir, outbreak_lineage, out_dir, outbreak_lineage))
-    
-    # Infer tree with IQ-TREE
-    cat(sprintf("\n# Infer phylogenetic tree\n"))
-    cat(sprintf("iqtree -s '%s/outbreaks/%s_aligned.fa' -m JC -nt AUTO -fast\n",
-                out_dir, outbreak_lineage))
-    
+    cat(sprintf("Rscript scripts/build_outbreak_trees.R '%s' '%s' '%s'\n",
+                params$out_base, params$dataset_date, params$dataset_dir))
     cat("```\n\n")
-    
-    # Show lineage info
-    if (length(db_seqs_for_lineage) > 0) {
-      cat(sprintf("*Lineage includes database variants: %s*\n\n",
-                  paste(db_seqs_for_lineage, collapse = ", ")))
-    }
   }
-  
-  cat("---\n\n")
 }
 ```
 
