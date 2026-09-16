@@ -158,6 +158,40 @@ norm_id <- function(x) {
   x
 }
 
+# Robust FASTA reader (readLines + iconv) — avoids ape::read.dna crashing on
+# non-UTF8 bytes in headers (common with Norwegian names in local database FASTA).
+# Returns a named character vector: name = header (without ">"), value = ungapped sequence.
+read_fasta_raw <- function(path) {
+  raw <- readLines(path, warn = FALSE)
+  raw <- iconv(raw, sub = "")
+  raw <- raw[!is.na(raw)]
+  
+  ids <- character()
+  seqs <- character()
+  cur_id <- NA_character_
+  cur_seq <- character()
+  
+  flush <- function() {
+    if (!is.na(cur_id)) {
+      ids[[length(ids) + 1]] <<- cur_id
+      seqs[[length(seqs) + 1]] <<- gsub("-", "", paste(cur_seq, collapse = ""))
+    }
+  }
+  
+  for (ln in raw) {
+    if (startsWith(ln, ">")) {
+      flush()
+      cur_id <- sub("^>", "", ln)
+      cur_seq <- character()
+    } else if (!is.na(cur_id)) {
+      cur_seq <- c(cur_seq, trimws(ln))
+    }
+  }
+  flush()
+  
+  setNames(seqs, ids)
+}
+
 # === ASSIGN BATCH SEQUENCES TO VARIANTS ======================================
 
 log_msg("\n--- Assigning batch sequences to variants ---")
@@ -216,6 +250,53 @@ if (n_unique_variants < 3) {
 
 log_msg("\n--- Generating phylogenetic trees ---")
 
+# Locate and read the database FASTA once (shared across all variants)
+db_fasta_candidates <- c(
+  file.path(dataset_dir, "input_dedup.fa"),
+  file.path(dataset_dir, "input.fa"),
+  file.path(dataset_dir, "reference.fasta"),
+  file.path(dataset_dir, "..", "References", "IA_IB_IIA_IIB_IIIA_IIIB_references.fa")
+)
+
+db_fasta_file <- NULL
+for (candidate in db_fasta_candidates) {
+  if (file.exists(candidate)) {
+    db_fasta_file <- candidate
+    log_msg("✓ Found database FASTA: %s", basename(candidate))
+    break
+  }
+}
+
+db_seqs_raw <- NULL
+if (!is.null(db_fasta_file)) {
+  db_seqs_raw <- tryCatch(read_fasta_raw(db_fasta_file), error = function(e) {
+    log_msg("✗ Error reading database FASTA: %s", conditionMessage(e))
+    NULL
+  })
+  if (!is.null(db_seqs_raw)) {
+    log_msg("✓ Loaded %d sequence(s) from database FASTA", length(db_seqs_raw))
+  }
+} else {
+  log_msg("⚠ Database FASTA file not found in expected locations")
+}
+
+# Lookup a database sequence by ID (exact then normalized match)
+lookup_db_seq <- function(id) {
+  if (is.null(db_seqs_raw)) return(NULL)
+  idx <- which(tolower(names(db_seqs_raw)) == tolower(id))
+  if (length(idx) == 0) {
+    idx <- which(norm_id(names(db_seqs_raw)) == norm_id(id))
+  }
+  if (length(idx) == 0) return(NULL)
+  db_seqs_raw[[idx[1]]]
+}
+
+mafft_available <- nzchar(Sys.which("mafft"))
+if (!mafft_available) {
+  log_msg("ERROR: mafft not found on PATH. Cannot align outbreak sequences.")
+  quit(save = "no", status = 1)
+}
+
 n_trees_generated <- 0
 
 for (outbreak_variant in unique_lineages) {
@@ -239,10 +320,17 @@ for (outbreak_variant in unique_lineages) {
   n_db <- nrow(db_seqs_for_variant)
   log_msg("  Database sequences: %d", n_db)
   
-  # Collect all sequences (both batch and database)
+  # Skip early based on real batch+database counts, before loading the (much larger)
+  # per-sequence-tree alignment files, which would otherwise inflate n_total artificially
+  if (n_batch + n_db < 3) {
+    log_msg("  ⚠ SKIP: Only %d real sequence(s) (batch=%d, db=%d), need ≥3 for phylogenetic analysis", n_batch + n_db, n_batch, n_db)
+    next
+  }
+  
+  # Collect all sequences as raw (ungapped) strings, to be aligned together with MAFFT
   all_outbreak_seqs <- list()
   
-  # Add batch sequences
+  # Add batch sequences (query only — row 1 of that sample's per-sequence alignment file)
   for (seq_name in batch_seqs_list) {
     seq_aln_file <- file.path(trees_dir, seq_name, "aligned_trimmed_blast_only.fa")
     if (!file.exists(seq_aln_file)) {
@@ -253,86 +341,61 @@ for (outbreak_variant in unique_lineages) {
     tryCatch({
       seqs <- ape::read.dna(seq_aln_file, format = "fasta", as.character = TRUE)
       if (nrow(seqs) > 0) {
-        for (j in seq_len(nrow(seqs))) {
-          seq_id <- rownames(seqs)[j]
-          if (j == 1) seq_id <- paste0(seq_name, "_BATCH")
-          all_outbreak_seqs[[seq_id]] <- seqs[j, ]
-        }
-        log_msg("    ✓ Loaded %d sequence(s) from %s", nrow(seqs), seq_name)
+        query_seq <- paste(toupper(seqs[1, ]), collapse = "")
+        query_seq <- gsub("-", "", query_seq)
+        all_outbreak_seqs[[paste0(seq_name, "_BATCH")]] <- query_seq
+        log_msg("    ✓ Loaded query sequence from %s", seq_name)
       }
     }, error = function(e) {
       log_msg("    ✗ Error reading %s: %s", seq_name, e$message)
     })
   }
   
-  # Add database sequences (read FASTA files from database directory)
-  if (nrow(db_seqs_for_variant) > 0) {
-    # Try to find database FASTA file
-    # Look for input.fa, input_dedup.fa, or references.fa
-    db_fasta_candidates <- c(
-      file.path(dataset_dir, "input_dedup.fa"),
-      file.path(dataset_dir, "input.fa"),
-      file.path(dataset_dir, "reference.fasta"),
-      file.path(dataset_dir, "..", "References", "IA_IB_IIA_IIB_IIIA_IIIB_references.fa")
-    )
-    
-    db_fasta_file <- NULL
-    for (candidate in db_fasta_candidates) {
-      if (file.exists(candidate)) {
-        db_fasta_file <- candidate
-        log_msg("    Found database FASTA: %s", basename(candidate))
-        break
+  # Add database sequences matching this variant (from the shared, pre-loaded database FASTA)
+  n_matched <- 0
+  if (nrow(db_seqs_for_variant) > 0 && !is.null(db_seqs_raw)) {
+    for (i in seq_len(nrow(db_seqs_for_variant))) {
+      db_id <- db_seqs_for_variant$id[i]
+      db_seq <- lookup_db_seq(db_id)
+      if (!is.null(db_seq)) {
+        all_outbreak_seqs[[db_id]] <- db_seq
+        n_matched <- n_matched + 1
       }
     }
+    log_msg("  ✓ Matched %d/%d database sequence(s) in FASTA", n_matched, nrow(db_seqs_for_variant))
+  } else if (nrow(db_seqs_for_variant) > 0) {
+    log_msg("  ⚠ Could not load database sequences (FASTA not available)")
+  }
+  
+  n_total <- length(all_outbreak_seqs)
+  log_msg("  Total sequences for tree: %d (batch + matched database)", n_total)
+  
+  # Add 1-2 outgroup sequences from OTHER variants for phylogenetic context
+  other_variants <- unique_lineages[unique_lineages != outbreak_variant]
+  if (length(other_variants) > 0 && !is.null(db_seqs_raw)) {
+    n_outgroup <- min(2, length(other_variants))
+    outgroup_variants <- sample(other_variants, n_outgroup)
     
-    if (!is.null(db_fasta_file)) {
-      tryCatch({
-        # Try to read with error handling for encoding issues
-        db_seqs_all <- NULL
-        tryCatch({
-          db_seqs_all <- ape::read.dna(db_fasta_file, format = "fasta", as.character = TRUE)
-        }, error = function(e) {
-          # If encoding error, try reading with Biostrings as fallback
-          log_msg("    ⚠ Encoding issue with ape::read.dna, attempting alternative method")
-          return(NULL)
-        })
-        
-        if (!is.null(db_seqs_all)) {
-          log_msg("    Loaded %d total sequences from database FASTA", nrow(db_seqs_all))
-          
-          # Match database sequences by their ID
-          n_matched <- 0
-          for (i in seq_len(nrow(db_seqs_for_variant))) {
-            db_id <- db_seqs_for_variant$id[i]
-            db_id_norm <- norm_id(db_id)
-            
-            # Find matching sequence in FASTA file
-            # Try exact match first, then normalized match
-            seq_idx <- which(tolower(rownames(db_seqs_all)) == tolower(db_id))
-            if (length(seq_idx) == 0) {
-              seq_idx <- which(norm_id(rownames(db_seqs_all)) == db_id_norm)
-            }
-            
-            if (length(seq_idx) > 0) {
-              all_outbreak_seqs[[db_id]] <- db_seqs_all[seq_idx[1], ]
-              n_matched <- n_matched + 1
-            }
-          }
-          
-          log_msg("    ✓ Loaded %d database sequence(s)", n_matched)
-        } else {
-          log_msg("    ⚠ Could not load database sequences due to encoding issues")
+    for (other_var in outgroup_variants) {
+      other_id <- meta %>%
+        mutate(base_var = extract_base_variant(lineage)) %>%
+        filter(base_var == other_var) %>%
+        slice(1) %>%
+        pull(id)
+      
+      if (length(other_id) > 0) {
+        other_seq <- lookup_db_seq(other_id[1])
+        if (!is.null(other_seq)) {
+          outgroup_label <- sprintf("%s_OUTGROUP_%s", other_id[1], other_var)
+          all_outbreak_seqs[[outgroup_label]] <- other_seq
+          log_msg("    ✓ Added outgroup from %s: %s", other_var, other_id[1])
         }
-      }, error = function(e) {
-        log_msg("    ✗ Error reading database sequences: %s", e$message)
-      })
-    } else {
-      log_msg("    ⚠ Database FASTA file not found in expected locations")
+      }
     }
   }
   
   n_total <- length(all_outbreak_seqs)
-  log_msg("  Total sequences for tree: %d", n_total)
+  log_msg("  Final tree composition: %d sequences (main variant + outgroups)", n_total)
   
   # Only generate trees with sufficient sequences for meaningful phylogeny
   if (n_total < 3) {
@@ -342,25 +405,34 @@ for (outbreak_variant in unique_lineages) {
   
   # Generate tree
   tryCatch({
-    # Convert to matrix
-    outbreak_seqs_mat <- do.call(rbind, all_outbreak_seqs)
+    variant_slug <- gsub("[^A-Za-z0-9.-]", "_", outbreak_variant)
     
-    # Write temporary alignment to output directory (for better control)
-    aln_file_tmp <- file.path(outbreak_trees_dir, sprintf(".tmp_tree_%s.fa", gsub("[^A-Za-z0-9.-]", "_", outbreak_variant)))
+    # Write raw (unaligned) sequences, then align them together with MAFFT
+    raw_file_tmp <- file.path(outbreak_trees_dir, sprintf("raw_%s.fasta", variant_slug))
     cat_lines <- character()
-    for (j in seq_len(nrow(outbreak_seqs_mat))) {
-      cat_lines <- c(cat_lines, paste0(">", rownames(outbreak_seqs_mat)[j]))
-      cat_lines <- c(cat_lines, paste(outbreak_seqs_mat[j, ], collapse = ""))
+    for (seq_id in names(all_outbreak_seqs)) {
+      cat_lines <- c(cat_lines, paste0(">", seq_id))
+      cat_lines <- c(cat_lines, all_outbreak_seqs[[seq_id]])
     }
-    writeLines(cat_lines, aln_file_tmp)
+    writeLines(cat_lines, raw_file_tmp)
+    
+    aln_file_tmp <- file.path(outbreak_trees_dir, sprintf("%s.fasta", variant_slug))
+    mafft_cmd <- sprintf("mafft --auto --quiet %s > %s", shQuote(raw_file_tmp), shQuote(aln_file_tmp))
+    mafft_exit <- system(mafft_cmd)
+    unlink(raw_file_tmp, force = TRUE)
+    
+    if (mafft_exit != 0 || !file.exists(aln_file_tmp) || file.size(aln_file_tmp) == 0) {
+      log_msg("  ✗ MAFFT alignment failed (exit code %d)", mafft_exit)
+      next
+    }
     log_msg("    Alignment written to: %s", basename(aln_file_tmp))
     
     # Build tree with IQ-TREE
-    tree_out_prefix <- sub("\\.fa$", "", aln_file_tmp)
+    tree_out_prefix <- sub("\\.fasta$", "", aln_file_tmp)
     
     # Capture both stdout and stderr to temporary files for debugging
-    stdout_log <- file.path(outbreak_trees_dir, sprintf(".iqtree_stdout_%s.log", gsub("[^A-Za-z0-9.-]", "_", outbreak_variant)))
-    stderr_log <- file.path(outbreak_trees_dir, sprintf(".iqtree_stderr_%s.log", gsub("[^A-Za-z0-9.-]", "_", outbreak_variant)))
+    stdout_log <- file.path(outbreak_trees_dir, sprintf(".iqtree_stdout_%s.log", variant_slug))
+    stderr_log <- file.path(outbreak_trees_dir, sprintf(".iqtree_stderr_%s.log", variant_slug))
     
     iqtree_cmd <- sprintf("iqtree -s %s -m JC -nt AUTO -fast -redo 2>&1 | tee %s", aln_file_tmp, stdout_log)
     iqtree_exit <- system(iqtree_cmd)
@@ -400,32 +472,63 @@ for (outbreak_variant in unique_lineages) {
       next
     }
     
-    # Prepare metadata for tree tips - simple source indicator
+    # Prepare rich metadata for tree tips: ID, variant, genotype, source
+    # Handle batch sequences, database sequences for this variant, and outgroups
     outbreak_tip_info <- tibble(label = outbreak_tree$tip.label) %>%
       mutate(
-        source = if_else(grepl("_BATCH$", label, ignore.case = TRUE), "Batch", "Database")
+        is_batch = grepl("_BATCH$", label, ignore.case = TRUE),
+        is_outgroup = grepl("_OUTGROUP_", label, ignore.case = TRUE),
+        # Extract base ID (remove _BATCH or _OUTGROUP_* suffixes for matching)
+        base_id = case_when(
+          is_batch ~ sub("_BATCH$", "", label),
+          is_outgroup ~ sub("_OUTGROUP_.*$", "", label),
+          TRUE ~ label
+        ),
+        source = case_when(
+          is_batch ~ "Batch (red)",
+          is_outgroup ~ "Outgroup (gray)",
+          TRUE ~ "Database"
+        )
+      ) %>%
+      left_join(
+        db_seqs_for_variant %>%
+          mutate(genotype = replace_na(genotype, "Unknown")),
+        by = c("base_id" = "id")
+      ) %>%
+      mutate(
+        # Display label: ID [Variant|Genotype]
+        display_label = case_when(
+          is_batch ~ sprintf("%s [%s]", label, outbreak_variant),
+          is_outgroup ~ sprintf("%s [OUTGROUP]", base_id),
+          !is.na(lineage) ~ sprintf("%s [%s|%s]", base_id, lineage, replace_na(genotype, "Unknown")),
+          TRUE ~ sprintf("%s [%s]", base_id, replace_na(genotype, "Unknown"))
+        )
       )
     
-    # Plot tree with improved error handling
+    # Plot tree with enhanced visualization
     p <- NULL
     tryCatch({
       p <- ggtree(outbreak_tree, layout = "rectangular", branch.length = "branch.length") %<+% outbreak_tip_info +
-        geom_tippoint(aes(color = source, shape = source), size = 3) +
-        geom_tiplab(aes(label = label), size = 2.5, hjust = -0.05) +
+        geom_tippoint(aes(color = source), size = 3) +
+        geom_tiplab(aes(label = display_label), size = 2.2, hjust = -0.05) +
         scale_color_manual(
-          values = c("Batch" = "#e74c3c", "Database" = "#3498db"),
+          values = c(
+            "Batch (red)" = "#e74c3c",
+            "Database" = "#3498db",
+            "Outgroup (gray)" = "#95a5a6"
+          ),
           name = "Source"
         ) +
-        scale_shape_manual(
-          values = c("Batch" = 19, "Database" = 17),
-          guide = "none"
-        ) +
         theme_tree2() +
-        theme(legend.position = "bottom") +
-        hexpand(.6) +
+        theme(
+          legend.position = "bottom",
+          axis.text.x = element_text(size = 8)
+        ) +
+        hexpand(.8) +
         labs(
-          title = sprintf("Variant %s — Phylogenetic tree", outbreak_variant),
-          subtitle = sprintf("Batch vs database sequences (n=%d total)", n_total)
+          title = sprintf("Variant %s — Phylogenetic outbreak tree", outbreak_variant),
+          subtitle = sprintf("Batch (n=%d) vs database (n=%d) + outgroups, total=%d",
+                            n_batch, nrow(db_seqs_for_variant), n_total)
         )
     }, error = function(e) {
       log_msg("  ✗ Error in ggtree visualization: %s", e$message)
@@ -447,10 +550,18 @@ for (outbreak_variant in unique_lineages) {
       log_msg("  ✗ Error saving PNG: %s", e$message)
     })
     
-    # Cleanup temp files
-    unlink(paste0(tree_out_prefix, ".*"), force = TRUE)
+    # Preserve alignment file (.fa) for documentation, clean up IQ-TREE temp files
+    # Keep: .fa (alignment)
+    # Remove: .iqtree, .log, .mldist, .treefile (IQ-TREE intermediates)
+    unlink(paste0(tree_out_prefix, ".iqtree"), force = TRUE)
+    unlink(paste0(tree_out_prefix, ".log"), force = TRUE)
+    unlink(paste0(tree_out_prefix, ".mldist"), force = TRUE)
+    unlink(paste0(tree_out_prefix, ".treefile"), force = TRUE)
+    unlink(paste0(tree_out_prefix, ".uniqueseq.phy"), force = TRUE)
     unlink(stdout_log, force = TRUE)
     unlink(stderr_log, force = TRUE)
+    
+    log_msg("  ✓ Alignment preserved: %s", basename(aln_file_tmp))
     
   }, error = function(e) {
     log_msg("  ✗ Error: %s", e$message)
