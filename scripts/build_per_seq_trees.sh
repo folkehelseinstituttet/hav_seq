@@ -164,6 +164,12 @@ try:
             if len(parts) < 12 or parts[0] != blast_query_id:
                 continue
             subject = parts[1]
+            # Skip self-hits: if the query sequence (or an identical copy) is
+            # itself present in the local database, it must not be selected as
+            # its own "neighbor" — this produces a duplicate row when combined
+            # with the query sequence later.
+            if subject == blast_query_id:
+                continue
             try:
                 mismatch = int(parts[4])
             except ValueError:
@@ -246,7 +252,8 @@ if tree_json != "NONE" and ndjson_path != "NONE":
             def collect_leaves(node, dist, results, exclude=None):
                 if not node.get("children"):
                     name = node.get("name", "")
-                    if name and not name.startswith("NODE_"):
+                    # Also skip self-hits from the community tree (same rationale as BLAST above)
+                    if name and not name.startswith("NODE_") and name != blast_query_id and name != query_id:
                         if exclude is None or name not in exclude:
                             results.append((name, dist))
                 else:
@@ -304,6 +311,16 @@ while IFS= read -r line; do           # Les hver linje fra FASTA-filen
     QUERY_IDS+=("$id")
   }
 done < "$BATCH_FA"                    # Les fra BATCH_FA-filen
+
+# Guard against duplicate FASTA headers in the batch — these would make the
+# per-query extraction below pick up multiple sequences for one "query" and
+# later crash the report on duplicate row names. Keep only the first occurrence.
+DUPLICATE_IDS=$(printf '%s\n' "${QUERY_IDS[@]}" | sort | uniq -d)
+if [[ -n "$DUPLICATE_IDS" ]]; then
+  echo "WARNING: Duplicate sequence header(s) found in batch FASTA — only the first occurrence of each will be processed:" >&2
+  echo "$DUPLICATE_IDS" | sed 's/^/  - /' >&2
+  mapfile -t QUERY_IDS < <(printf '%s\n' "${QUERY_IDS[@]}" | awk '!seen[$0]++')
+fi
 
 echo "════════════════════════════════════════════════════════════════"
 echo "Building per-sequence trees: $BATCH_NAME"
@@ -366,13 +383,16 @@ for QUERY in "${QUERY_IDS[@]}"; do
   # Strip carriage returns to handle Windows line endings.
   QUERY_FA="$SEQ_DIR/query.fa"
   awk -v q="$QUERY" '
-    BEGIN {keep=0}
+    BEGIN {keep=0; found=0}
     /^>/ {
       header = substr($0,2)
       # Strip trailing carriage returns and whitespace to handle Windows line endings
       gsub(/\r$/, "", header)
       gsub(/[[:space:]]*$/, "", header)
-      keep = (header == q)
+      # Only ever keep the first match — a duplicate header elsewhere in the
+      # batch FASTA must not produce a second copy of the query sequence.
+      keep = (header == q && found == 0)
+      if (keep) found = 1
     }
     keep {print}
   ' "$BATCH_FA" > "$QUERY_FA"
@@ -390,6 +410,20 @@ for QUERY in "${QUERY_IDS[@]}"; do
   if [[ -f "$COMMUNITY_SEQS_FA" ]]; then
     seqkit grep -f "$SEQ_DIR/neighbors.txt" "$COMMUNITY_SEQS_FA" >> "$NEIGHBORS_FA"
   fi
+
+  # Belt-and-braces: drop any neighbor whose header exactly matches the query
+  # (e.g. the query sequence already exists in the reference database under
+  # the same name) so it can't end up duplicated once combined below.
+  awk -v q="$QUERY" '
+    BEGIN {keep=1}
+    /^>/ {
+      header = substr($0,2)
+      gsub(/\r$/, "", header)
+      gsub(/[[:space:]]*$/, "", header)
+      keep = (header != q)
+    }
+    keep {print}
+  ' "$NEIGHBORS_FA" > "$NEIGHBORS_FA.tmp" && mv "$NEIGHBORS_FA.tmp" "$NEIGHBORS_FA"
 
   N_REF=$(grep -c "^>" "$NEIGHBORS_FA" 2>/dev/null || echo 0)
   echo "  Reference sequences extracted: $N_REF"
