@@ -1612,6 +1612,17 @@ for (i in seq_along(query_ids)) {
   if (!is.null(seqs_raw)) {
     rownames(seqs_raw) <- sub(" \\[QUERY\\]$", "", rownames(seqs_raw))
   }
+  # Defensive: duplicate FASTA headers (e.g. from an older alignment generated
+  # before the batch FASTA duplicate-header guard) would otherwise crash
+  # data.frame() further down with "duplicate row.names". Keep the first
+  # occurrence's name intact (so query_id matching still works) and suffix
+  # any repeats instead of failing the whole report.
+  if (!is.null(seqs_raw) && anyDuplicated(rownames(seqs_raw)) > 0) {
+    dup_ids <- unique(rownames(seqs_raw)[duplicated(rownames(seqs_raw))])
+    cat(sprintf("*Warning: duplicate sequence header(s) in alignment (%s) — extra copies were renamed for display.*\n\n",
+                paste(dup_ids, collapse = ", ")))
+    rownames(seqs_raw) <- make.unique(rownames(seqs_raw))
+  }
 
   # ── 1. Phylogenetic tree ────────────────────────────────────────────────────
   cat("### Phylogenetic tree\n\n")
@@ -2479,6 +2490,12 @@ if (length(batch_seqs_in_alignment) < 2) {
   
   # Display SNP heatmap if we have matrix
   if (!is.null(batch_snp_mat)) {
+    # Defensive: duplicate sequence names would otherwise crash data.frame()
+    # with "duplicate row.names" further down.
+    if (anyDuplicated(rownames(batch_snp_mat)) > 0) {
+      rownames(batch_snp_mat) <- make.unique(rownames(batch_snp_mat))
+      colnames(batch_snp_mat) <- make.unique(colnames(batch_snp_mat))
+    }
     batch_lbl <- rownames(batch_snp_mat)
     batch_ann_row <- data.frame(
       Type = rep("Batch", nrow(batch_snp_mat)),
