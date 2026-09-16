@@ -23,7 +23,7 @@
 #   - R with ape package (SNP distance calculation)
 #
 # Output:
-#   - <output_dir>/trees/batch/aligned.fa          (batch alignment)
+#   - <output_dir>/trees/batch/batch.aligned.fasta (batch alignment)
 #   - <output_dir>/trees/batch/tree.treefile       (phylogenetic tree)
 #   - <output_dir>/snp_matrices/batch_snp_distances.tsv (SNP distance matrix)
 #
@@ -193,7 +193,7 @@ echo ""
 echo ""
 echo "Step 2: Running MAFFT alignment..."
 
-BATCH_ALIGN_ALIGNED="$BATCH_TREES/aligned.fa"
+BATCH_ALIGN_ALIGNED="$BATCH_TREES/batch.aligned.fasta"
 mafft --auto "$BATCH_ALIGN_TMP" > "$BATCH_ALIGN_ALIGNED"
 
 if [[ ! -f "$BATCH_ALIGN_ALIGNED" ]]; then
