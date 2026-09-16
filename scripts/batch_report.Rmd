@@ -1557,7 +1557,7 @@ treefile_exists <- sapply(query_ids_normalized, function(id) file.exists(file.pa
 aln_exists <- sapply(query_ids_normalized, function(id) {
   # Prefer BLAST-only alignment if available, otherwise fall back to full alignment
   blast_only <- file.exists(file.path(trees_dir, id, "aligned_trimmed_blast_only.fa"))
-  full_aln <- file.exists(file.path(trees_dir, id, "aligned_trimmed.fa"))
+  full_aln <- file.exists(file.path(trees_dir, id, paste0(id, ".aligned_trimmed.fasta")))
   blast_only || full_aln
 })
 
@@ -1596,7 +1596,7 @@ for (i in seq_along(query_ids)) {
   aln_file <- if (file.exists(file.path(tree_dir, "aligned_trimmed_blast_only.fa"))) {
     file.path(tree_dir, "aligned_trimmed_blast_only.fa")
   } else {
-    file.path(tree_dir, "aligned_trimmed.fa")
+    file.path(tree_dir, paste0(query_id_norm, ".aligned_trimmed.fasta"))
   }
   treefile <- file.path(tree_dir, "tree.treefile")
   tr <- NULL
@@ -1606,6 +1606,12 @@ for (i in seq_along(query_ids)) {
     tryCatch(ape::read.dna(aln_file, format = "fasta", as.character = TRUE),
              error = function(e) NULL)
   } else NULL
+  # The saved .aligned.fasta/.aligned_trimmed.fasta files mark the query header
+  # with a trailing " [QUERY]" for readability — strip it back off so all the
+  # exact-match comparisons against query_id below keep working unchanged.
+  if (!is.null(seqs_raw)) {
+    rownames(seqs_raw) <- sub(" \\[QUERY\\]$", "", rownames(seqs_raw))
+  }
 
   # ── 1. Phylogenetic tree ────────────────────────────────────────────────────
   cat("### Phylogenetic tree\n\n")
@@ -1725,10 +1731,10 @@ for (i in seq_along(query_ids)) {
                            size = 2.5, hjust = 1.15, vjust = -0.4, color = "grey35")
       }
 
-      .tmp_png <- tempfile(fileext = ".png")
-      ggsave(.tmp_png, plot = p, width = 18, height = 9, dpi = 150)
-      .embed_img(.tmp_png)
-      file.remove(.tmp_png)
+      # Persist to output/trees/<seqName>/tree.png (not a tempfile) so it survives after report generation
+      tree_png_path <- file.path(tree_dir, "tree.png")
+      ggsave(tree_png_path, plot = p, width = 18, height = 9, dpi = 150)
+      .embed_img(tree_png_path)
       if (use_cladogram_view) {
         cat("*Display note:* Large branch-length outliers detected. Tree is shown as a topology-only cladogram for readability; branch lengths are still preserved in `tree.treefile`.\n\n")
       }
@@ -1902,6 +1908,41 @@ for (i in seq_along(query_ids)) {
 
   # ── 3. Alignment diagnostics (Panel E only) ───────────────────────────────
   cat("### Alignment diagnostics\n\n")
+  
+  # Inject other batch samples' query sequences into this alignment so they can be
+  # compared to the query. mafft --add --keeplength maps them onto the existing
+  # column coordinates without disturbing the reference alignment.
+  other_batch_ids <- setdiff(query_ids_normalized, query_id_norm)
+  if (!is.null(seqs_raw) && length(other_batch_ids) > 0) {
+    other_seqs_fa <- character()
+    for (other_id in other_batch_ids) {
+      other_aln_file <- file.path(trees_dir, other_id, "aligned_trimmed_blast_only.fa")
+      if (file.exists(other_aln_file)) {
+        other_seqs <- tryCatch(ape::read.dna(other_aln_file, format = "fasta", as.character = TRUE), error = function(e) NULL)
+        if (!is.null(other_seqs) && nrow(other_seqs) > 0) {
+          seq_str <- gsub("-", "", paste(toupper(other_seqs[1, ]), collapse = ""))
+          other_seqs_fa <- c(other_seqs_fa, paste0(">", other_id), seq_str)
+        }
+      }
+    }
+    
+    if (length(other_seqs_fa) > 0 && nzchar(Sys.which("mafft"))) {
+      tmp_new <- tempfile(fileext = ".fa")
+      tmp_out <- tempfile(fileext = ".fa")
+      writeLines(other_seqs_fa, tmp_new)
+      
+      mafft_cmd <- sprintf("mafft --quiet --add %s --keeplength %s > %s",
+                            shQuote(tmp_new), shQuote(aln_file), shQuote(tmp_out))
+      mafft_exit <- system(mafft_cmd)
+      
+      if (mafft_exit == 0 && file.exists(tmp_out) && file.size(tmp_out) > 0) {
+        seqs_ext <- tryCatch(ape::read.dna(tmp_out, format = "fasta", as.character = TRUE), error = function(e) NULL)
+        if (!is.null(seqs_ext)) seqs_raw <- seqs_ext
+      }
+      unlink(c(tmp_new, tmp_out), force = TRUE)
+    }
+  }
+  
   if (is.null(seqs_raw) || nrow(seqs_raw) < 2) {
     cat("*Alignment not available or too few sequences.*\n\n")
   } else if (ncol(seqs_raw) > 2000) {
@@ -1948,9 +1989,14 @@ for (i in seq_along(query_ids)) {
       left_join(ref_meta %>% select(id_norm, lineage, lineage_phylo, genotype), by = c("id" = "id_norm")) %>%
       left_join(community_meta, by = "id") %>%
       mutate(
+        # True database variant (e.g. NOR-2024-V6b) — kept separate from the
+        # community-clade fallback below so it isn't confused with genotype/clade.
+        variant       = lineage,
         lineage_phylo = coalesce(lineage_phylo, community_lineage_phylo),
         lineage       = coalesce(lineage, community_clade),
         genotype      = coalesce(genotype, community_clade),
+        # Flag if this is a batch sequence
+        is_batch = id %in% query_ids_normalized,
         # Shorten long FASTA headers: extract accession + isolate/strain name
         short_id = {
           accession <- str_extract(id, "^[^\\s]+")
@@ -1963,16 +2009,30 @@ for (i in seq_along(query_ids)) {
                  paste0(accession, " (", isolate_part, ")"),
                  accession)
         },
-        display = case_when(
-          id == query_id & !is.na(genotype) & !is.na(lineage_phylo) ~ paste0(short_id, " ★ [", genotype, "  /  ", lineage_phylo, "]"),
-          id == query_id & !is.na(genotype) ~ paste0(short_id, " ★ [", genotype, "]"),
-          id == query_id & !is.na(lineage_phylo) ~ paste0(short_id, " ★ [", lineage_phylo, "]"),
-          id == query_id ~ paste0(short_id, " ★"),
-          !is.na(genotype) & !is.na(lineage_phylo) ~ paste0(short_id, " [", genotype, "  /  ", lineage_phylo, "]"),
-          !is.na(genotype) ~ paste0(short_id, " [", genotype, "]"),
-          !is.na(lineage_phylo) ~ paste0(short_id, " [", lineage_phylo, "]"),
-          !is.na(lineage) ~ paste0(short_id, " [", lineage, "]"),
-          TRUE ~ short_id
+        # Genotype/lineage_phylo tag, with the real variant appended when known
+        # (this is what surfaces the variant for BLAST top hits from the database)
+        tag = case_when(
+          !is.na(genotype) & !is.na(lineage_phylo) ~ paste0(genotype, "  /  ", lineage_phylo),
+          !is.na(genotype) ~ genotype,
+          !is.na(lineage_phylo) ~ lineage_phylo,
+          !is.na(lineage) ~ lineage,
+          TRUE ~ NA_character_
+        ),
+        tag = case_when(
+          !is.na(variant) & !is.na(tag) ~ paste0(tag, "  |  ", variant),
+          !is.na(variant) ~ variant,
+          TRUE ~ tag
+        ),
+        prefix = case_when(
+          id == query_id & is_batch ~ " \u2605 QUERY",
+          is_batch                  ~ " \u25c6 BATCH",
+          id == query_id            ~ " \u2605",
+          TRUE ~ ""
+        ),
+        display = if_else(
+          !is.na(tag),
+          paste0(short_id, prefix, " [", tag, "]"),
+          paste0(short_id, prefix)
         )
       )
     lbl_map <- setNames(label_tbl$display, label_tbl$id)
@@ -1988,7 +2048,13 @@ for (i in seq_along(query_ids)) {
       mat_cov <- mat_ord[, keep_cov, drop = FALSE]
       pos_cov <- pos_all[keep_cov]
 
-      consensus <- apply(mat_cov, 2, .consensus_base)
+      # Use query sequence as reference instead of consensus
+      # Query (first sequence in alignment) is the reference for comparison
+      query_row <- which(rownames(mat_ord) == query_id)
+      query_seq <- if (length(query_row) > 0) mat_ord[query_row[1], keep_cov, drop = TRUE] else rep(NA, ncol(mat_cov))
+      
+      # For entropy/conservation calculations, also compute consensus as reference for statistical measures
+      consensus <- if (length(query_row) > 0) query_seq else apply(mat_cov, 2, .consensus_base)
       entropy <- apply(mat_cov, 2, .col_entropy)
       gap_density <- colMeans(mat_cov == "-")
       ambig_density <- apply(mat_cov, 2, function(col) mean(!(col %in% c(called, "-"))))
@@ -2010,15 +2076,18 @@ for (i in seq_along(query_ids)) {
 
       # ── Panel E: Top informative zoom windows ─────────────────────────────
       cat("**Zoomed informative windows**\n\n")
-      cat("*Figure legend:* Top informative windows selected by combined entropy/SNP/gap signal; tiles show consensus-relative state and nucleotide letter. Query sequence is marked with ★. The alignment includes the query sequence, BLAST top hits from the local database, and selected reference sequences. Sample selection criteria: top BLAST hits by SNP distance, plus NextClade community reference sequences.\n\n")
+      cat("*Figure legend:* Top informative windows selected by combined entropy/SNP/gap signal; tiles show query-relative state and nucleotide letter. Query sequence is marked with ★ QUERY and serves as the reference for comparison. Batch samples are marked with ◆ BATCH. Labels show genotype/lineage_phylo and, where known, the database variant (e.g. NOR-2024-V6b) for BLAST top hits. The alignment includes the query sequence, other batch samples, BLAST top hits from the local database, and selected reference sequences.\n\n")
       
-      # Define color palette for alignment states
+      # Define color palette for alignment states (relative to query)
       diff_pal <- c(
-        "Consensus" = "#e5e7eb",
-        "Diff" = "#0f766e",
+        "Query" = "#fef3c7",
+        "Batch-Match" = "#d1fae5",
+        "Batch-Diff" = "#fecaca",
+        "DB-Match" = "#e5e7eb",
+        "DB-Diff" = "#0f766e",
         "Gap" = "#ffffff",
         "Ambig" = "#4c1d95",
-        "No consensus" = "#d1d5db"
+        "No Query" = "#d1d5db"
       )
       
       score <- .rescale01(replace_na(entropy, 0)) +
@@ -2045,15 +2114,20 @@ for (i in seq_along(query_ids)) {
             as_tibble() %>%
             mutate(
               base = mat_cov[cbind(match(seq_id, rownames(mat_cov)), col_i)],
-              cons = consensus[col_i],
+              query_base = consensus[col_i],  # Query is now the reference (consensus)
               position = pos_cov[col_i],
               seq_label = lbl_map[seq_id],
+              is_batch_seq = seq_id %in% query_ids_normalized,
+              is_query_seq = seq_id == query_id,
               state = case_when(
+                is_query_seq ~ "Query",
                 base == "-" ~ "Gap",
                 !(base %in% c(called, "-")) ~ "Ambig",
-                is.na(cons) ~ "No consensus",
-                base == cons ~ "Consensus",
-                TRUE ~ "Diff"
+                is.na(query_base) ~ "No Query",
+                is_batch_seq & base == query_base ~ "Batch-Match",
+                is_batch_seq & base != query_base ~ "Batch-Diff",
+                base == query_base ~ "DB-Match",
+                TRUE ~ "DB-Diff"
               ),
               base_label = case_when(
                 base == "-" ~ "-",
@@ -2061,7 +2135,7 @@ for (i in seq_along(query_ids)) {
                 TRUE ~ "N"
               ),
               text_color = case_when(
-                state %in% c("Diff", "Ambig") ~ "#ffffff",
+                state %in% c("DB-Diff", "Batch-Diff", "Ambig") ~ "#ffffff",
                 TRUE ~ "#111827"
               )
             )
@@ -2274,7 +2348,7 @@ if (length(batch_seqs_in_alignment) < 2) {
 } else {
   # Try to auto-generate batch analysis if files don't exist
   batch_tree_file <- file.path(trees_dir, "batch", "tree.treefile")
-  batch_aln_file_aligned <- file.path(trees_dir, "batch", "aligned.fa")
+  batch_aln_file_aligned <- file.path(trees_dir, "batch", "batch.aligned.fasta")
   batch_tree_available <- file.exists(batch_tree_file) && file.info(batch_tree_file)$size > 0
   batch_aln_available <- file.exists(batch_aln_file_aligned) && file.info(batch_aln_file_aligned)$size > 0
   
@@ -2543,27 +2617,38 @@ if (nrow(meta) > 0 && "lineage" %in% names(meta)) {
 if (nrow(outbreak_candidates) == 0) {
   cat("*No lineages detected in batch.*\n\n")
 } else {
-  cat(sprintf("**Lineages in batch:** %d lineage group(s) identified\n\n", nrow(outbreak_candidates)))
+  # Table shows lineages with >=2 total sequences; trees require >=3 (built in build_outbreak_trees.R)
+  outbreak_candidates_table <- outbreak_candidates %>%
+    filter(n_total >= 2)
+  outbreak_candidates_display <- outbreak_candidates %>%
+    filter(n_total >= 3)
   
-  # Summary table 
-  cat("**Lineage overview:**\n\n")
-  outbreak_display <- outbreak_candidates %>%
-    select(
-      `Lineage` = base_lineage,
-      `Batch (n)` = n_batch,
-      `Database (n)` = n_db,
-      `Total` = n_total
-    )
-  
-  cat(outbreak_display %>%
-        kbl() %>%
-        kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
+  if (nrow(outbreak_candidates_table) == 0) {
+    cat("*No lineages with ≥2 total sequences detected in batch.*\n\n")
+  } else {
+    cat(sprintf("**Lineages in batch:** %d lineage group(s) with ≥2 sequences\n\n", nrow(outbreak_candidates_table)))
+    
+    # Summary table 
+    cat("**Lineage overview (≥2 sequences):**\n\n")
+    outbreak_display <- outbreak_candidates_table %>%
+      select(
+        `Lineage` = base_lineage,
+        `Batch (n)` = n_batch,
+        `Database (n)` = n_db,
+        `Total` = n_total
+      )
+    
+    cat(outbreak_display %>%
+          kbl() %>%
+          kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
         as.character())
-  cat("\n\n")
+    cat("\n\n")
+  }
   
   # Create tabset structure for outbreak trees (display pre-generated PNG images)
-  cat("**Phylogenetic trees by lineage {.tabset}**\n\n")
-  cat("## {.unlisted .unnumbered}\n\n")
+  # NOTE: {.tabset} must be attached to an actual Markdown header, not bold text,
+  # and tab headers must be exactly one level deeper for the tabset to activate.
+  cat("## Phylogenetic trees by lineage {.tabset}\n\n")
   
   # Check if outbreak_trees directory exists with PNG files
   outbreak_trees_dir <- file.path(params$out_base, "outbreak_trees")
@@ -2573,21 +2658,24 @@ if (nrow(outbreak_candidates) == 0) {
     png_files <- sort(png_files)  # Sort alphabetically
     
     if (length(png_files) > 0) {
-      # Create tabs for each PNG file
+      # Create tabs for each PNG file (only variants with >=3 sequences)
       for (png_path in png_files) {
         variant_name <- sub("\\.png$", "", basename(png_path))
         
-        # Get batch and DB sequence counts for this lineage
-        lineage_row <- outbreak_candidates %>%
+        # Get batch and DB sequence counts for this lineage (from filtered candidates)
+        lineage_row <- outbreak_candidates_display %>%
           filter(base_lineage == variant_name)
         
-        n_batch_seqs <- if (nrow(lineage_row) > 0) lineage_row$n_batch[1] else 0
-        n_db_seqs <- if (nrow(lineage_row) > 0) lineage_row$`Database (n)`[1] else 0
+        # Skip if not in display list (should have >=3 sequences)
+        if (nrow(lineage_row) == 0) next
+        
+        n_batch_seqs <- lineage_row$n_batch[1]
+        n_db_seqs <- lineage_row$n_db[1]
         
         # Create tab header
-        cat(sprintf("\n## %s\n\n", variant_name))
-        cat(sprintf("**Batch samples:** %d | **Database samples:** %d\n\n",
-                    n_batch_seqs, n_db_seqs))
+        cat(sprintf("\n### %s\n\n", variant_name))
+        cat(sprintf("**Batch samples:** %d | **Database samples:** %d | **Total:** %d\n\n",
+                    n_batch_seqs, n_db_seqs, n_batch_seqs + n_db_seqs))
         
         # Embed pre-generated PNG image
         .embed_img(png_path)
@@ -2657,9 +2745,12 @@ tibble(
     file.path(params$out_base, "blast_results.tsv"),
     file.path(params$out_base, "lineages", "nextclade.tsv"),
     file.path(params$out_base, "trees", "<seqName>", "tree.treefile"),
-    file.path(params$out_base, "trees", "<seqName>", "aligned_trimmed.fa"),
+    file.path(params$out_base, "trees", "<seqName>", "tree.png"),
+    file.path(params$out_base, "trees", "<seqName>", "<seqName>.aligned_trimmed.fasta"),
     file.path(params$out_base, "trees", "<seqName>", "aligned_trimmed_blast_only.fa"),
     file.path(params$out_base, "snp_matrices", "<seqName>_snp_distances.tsv"),
+    file.path(params$out_base, "outbreak_trees", "<Variant>.fasta"),
+    file.path(params$out_base, "outbreak_trees", "<Variant>.png"),
     file.path(params$out_base, "summary.tsv"),
     file.path(params$out_base, "comparison.tsv")
   ),
@@ -2667,9 +2758,12 @@ tibble(
     "BLAST hits vs local HAV database",
     "NextClade: lineages dataset (clade + lineage_phylo)",
     "IQ-TREE ML tree per query sequence",
+    "Rendered phylogenetic tree image (PNG) per query sequence",
     "MAFFT alignment (query + BLAST hits + NextClade community sequences)",
     "MAFFT alignment with BLAST hits only (no NextClade) — used for heatmap in report",
     "Pairwise SNP distance matrix per query sequence (TSV format for external analysis)",
+    "Outbreak phylogenetic alignment: batch sequences + database sequences for each variant (FASTA)",
+    "Outbreak phylogenetic tree visualization (PNG) per HAV variant",
     "Per-sequence summary table (this report, TSV)",
     "Clade comparison table (this report, TSV)"
   )
