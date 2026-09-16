@@ -47,7 +47,7 @@ results <- tibble(
 for (i in seq_len(nrow(results))) {
   dir_path <- file.path(trees_dir, results$seqName[i])
   treefile_path <- file.path(dir_path, "tree.treefile")
-  aln_path <- file.path(dir_path, "aligned_trimmed.fa")
+  aln_path <- file.path(dir_path, paste0(results$seqName[i], ".aligned_trimmed.fasta"))
   
   results$treefile[i] <- if_else(file.exists(treefile_path), "✓", "✗")
   results$aligned_fasta[i] <- if_else(file.exists(aln_path), "✓", "✗")
