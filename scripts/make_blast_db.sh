@@ -19,19 +19,21 @@
 set -euo pipefail
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-DATASET_DATE="${1:-2026-04-10}"
+DATASET_DATE=$(date +%Y-%m-%d)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BASE_REL="data/local_datasets/$DATASET_DATE"
-INPUT_FA="$BASE_REL/input.fa"
-DB_DIR="$BASE_REL/blast_db"
-DB_PATH="$DB_DIR/hav"
+#PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+BASE_REL="/mnt/n/Virologi/Hepatitt/Hepatitt A/HAV genteknologi/Databaser"
+INPUT_FA="$BASE_REL/2PA.fa"
+DB_DIR="/mnt/n/Virologi/Hepatitt/Hepatitt A/HAV genteknologi/Databaser/local_datasets"
+#DB_DIR="$BASE_REL/blast_db"
+DB_PATH="$DB_DIR/$DATASET_DATE"
 
-cd "$PROJECT_DIR"
+
+cd "$BASE_REL"
 
 # ── Checks ────────────────────────────────────────────────────────────────────
 if [[ ! -f "$INPUT_FA" ]]; then
-    echo "ERROR: input FASTA not found: $PROJECT_DIR/$INPUT_FA" >&2
+    echo "ERROR: input FASTA not found: $BASE_REL/$INPUT_FA" >&2
     exit 1
 fi
 
@@ -42,7 +44,7 @@ if ! command -v makeblastdb &> /dev/null; then
 fi
 
 # ── Build database ────────────────────────────────────────────────────────────
-mkdir -p "$DB_DIR"
+mkdir -p "$DB_PATH"
 
 # Deduplicate FASTA: keep first occurrence of each sequence ID.
 # input.fa may contain entries that cause makeblastdb to fail or warn:
@@ -50,7 +52,7 @@ mkdir -p "$DB_DIR"
 #   - non-ASCII or control characters in headers
 #   - empty sequences
 # This step deduplicates and sanitizes headers before building the database.
-DEDUP_FA="$DB_DIR/input_dedup.fa"
+DEDUP_FA="$DB_PATH/input_dedup.fa"
 python3 - "$INPUT_FA" "$DEDUP_FA" << 'PYEOF'
 import sys, re
 in_fa, out_fa = sys.argv[1], sys.argv[2]
@@ -114,21 +116,30 @@ print(f"  Preprocessing: kept {kept}, skipped {skipped_dup} duplicates, "
 PYEOF
 
 echo "── Building BLAST database ───────────────────────────────────────────────"
-echo "  Input : $PROJECT_DIR/$INPUT_FA"
-echo "  Output: $PROJECT_DIR/$DB_PATH"
+echo "  Input : $INPUT_FA"
+echo "  Output: $DB_PATH"
 echo ""
 
+BLAST_DIR=/tmp/blastdb
+
+ln -sfn "$DB_PATH" "$BLAST_DIR" #link til sti pga mellomrom i filbane
+ln -sfn "$DEDUP_FA" "$BLAST_DIR/input_dedup.fa" #link til sti pga mellomrom i filbane
+
+mkdir -p "$DB_PATH/blast_db"
+
 makeblastdb \
-    -in      "$DEDUP_FA" \
+    -in      "$BLAST_DIR/input_dedup.fa" \
     -dbtype  nucl \
-    -out     "$DB_PATH" \
-    -title   "HAV_$DATASET_DATE"
+    -out     "$BLAST_DIR/blast_db/hav" \
+    -title   "$DATASET_DATE"
+
+mv "$DEDUP_FA" "$DB_PATH/blast_db"
 
 echo ""
 echo "── Done ──────────────────────────────────────────────────────────────────"
 echo "  Sequences in DB : $(grep -c '^>' "$DEDUP_FA")"
 echo "  Database files  :"
-ls -lh "$DB_DIR"
+ls -lh "$DB_PATH/blast_db"
 echo ""
 echo "  To retrieve a sequence by ID (run from project root):"
 echo "    grep -A999 '^><id>' $DEDUP_FA | tail -n +2 | grep -B999 '^>' | head -n -1"
