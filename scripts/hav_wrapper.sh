@@ -287,6 +287,19 @@ echo "  Output    : $OUT_BASE"
 echo "════════════════════════════════════════════════════════════════"
 
 # ════════════════════════════════════════════════════════════════════════════
+# PREPARE METADATA
+# ════════════════════════════════════════════════════════════════════════════
+
+REQUEST_DIR="/mnt/n/Virologi/Hepatitt/Hepatitt A/HAV genteknologi/Requests"
+echo "  Dataset Dir : $DATASET_DIR"
+echo "  Request Dir : $REQUEST_DIR"
+
+step "Preparing metadata"
+"$RSCRIPT" scripts/prepare_metadata.R "$REQUEST_DIR/Requests.xlsx" "$DATASET_DIR/HAV_lw_uttrekk.tsv" "$DATASET_DIR/metadata.tsv" || exit 1
+
+METADATA="$DATASET_DIR/metadata.tsv"
+
+# ════════════════════════════════════════════════════════════════════════════
 # WGS BRANCH
 # ════════════════════════════════════════════════════════════════════════════
 if [[ "$MODE" == "wgs" ]]; then
@@ -358,5 +371,23 @@ if [[ "$MODE" == "sanger" && -n "$PRIMER_NAMES" ]]; then
 fi
 
 # Pass arguments directly to preserve spaces in paths
+echo "Running all analyses with the following parameters:"
+echo "  BATCH_DIR     = $BATCH_DIR"
+echo "  DATASET_DATE  = $DATASET_DATE"
+echo "  BATCH_FA      = $BATCH_FA"
+echo "  DATASET_DIR   = $DATASET_DIR"
+echo "  OUT_BASE      = $OUT_BASE"
+echo "  YEAR          = $YEAR"
+echo "  OPTIONAL_ARGS = ${OPTIONAL_ARGS[@]}"
 bash scripts/run_all_analyses.sh "$BATCH_DIR" "$DATASET_DATE" "$BATCH_FA" "$DATASET_DIR" "$OUT_BASE" "$YEAR" "${OPTIONAL_ARGS[@]}"
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# ADD FASTA TO DATABASE
+# ════════════════════════════════════════════════════════════════════════════
+
+step "Add FASTA to database"
+#bash scripts/add_fasta_to_db.sh "$BATCH_FA" "$OUT_BASE" || exit 1
+if [[ -f "$BATCH_FA" ]]; then
+  bash scripts/add_fasta_to_db.sh "$BATCH_FA" "$OUT_BASE" || exit 1
+fi
