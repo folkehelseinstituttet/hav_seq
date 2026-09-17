@@ -55,7 +55,7 @@ out_dir      <- file.path(params$out_base)
 trees_dir    <- file.path(out_dir, "trees")
 #dataset_base <- file.path(proj_dir, "data", "local_datasets", params$dataset_date)
 dataset_base <- file.path(params$dataset_dir)
-metadata_tsv <- file.path(dataset_base, "metadata_corrected.tsv")
+metadata_tsv <- file.path(dataset_base, "metadata.tsv")
 batch_name   <- basename(params$batch_dir)
 input_fasta  <- file.path(params$batch_fa)
 
@@ -116,9 +116,11 @@ norm_id <- function(x) {
 
 # Reference metadata
 meta <- safe_tsv(metadata_tsv)
-if (nrow(meta) > 0 && "date" %in% names(meta)) {
-  meta <- meta %>% mutate(date = as.character(date))
-}
+
+#if (nrow(meta) > 0 && "date" %in% names(meta)) {
+#  meta <- meta %>% mutate(date = as.character(date))
+#}
+
 if (params$dataset_date == "2026-04-10" && nrow(meta) > 0 && "id" %in% names(meta)) {
   meta <- meta %>% filter(as.character(id) != "534954")
 }
@@ -322,6 +324,7 @@ all_queries <- nc_lineages$seqName
 # Metadata for joining reference info to BLAST hits
 meta_for_join <- if (nrow(meta) > 0) {
   meta_lineage_col <- case_when(
+    "variant" %in% names(meta) ~ "variant",
     "lineage" %in% names(meta) ~ "lineage",
     "community_lineage" %in% names(meta) ~ "community_lineage",
     "lineage_phylo" %in% names(meta) ~ "lineage_phylo",
@@ -331,7 +334,7 @@ meta_for_join <- if (nrow(meta) > 0) {
   meta_base <- meta %>%
     transmute(
       sseqid = id,
-      hit_date = if ("date" %in% names(meta)) as.character(date) else NA_character_,
+      #hit_date = if ("date" %in% names(meta)) as.character(date) else NA_character_,
       hit_genotype = if ("genotype" %in% names(meta)) as.character(genotype) else NA_character_,
       hit_lineage = if (!is.na(meta_lineage_col)) as.character(.data[[meta_lineage_col]]) else NA_character_
     )
@@ -809,8 +812,8 @@ if (junction_is_usable) {
           axis.text.y = element_text(size = 6.5),
           axis.text.x = element_text(size = 7)
         )
-    }
-  }
+    } # end junction MSA plot
+  } # end junction alignment visualization
 
   mat_j <- tolower(junction_aln[junction_order, , drop = FALSE])
   called_j <- c("a", "c", "g", "t")
@@ -880,8 +883,8 @@ if (junction_is_usable) {
         plot.title = element_text(face = "bold", size = 10),
         legend.position = "bottom"
       )
-  }
-}
+  } # end junction variant plot
+} # end junction alignment check
 
 input_overview <- if (nrow(input_seq_summary) > 0) {
   lens <- input_seq_summary$length
@@ -963,6 +966,7 @@ if (file.exists(.ss_path)) {
 
   # The local metadata can expose lineage with different column names.
   lineage_col <- dplyr::case_when(
+    "variant" %in% names(metadata_tsv_df) ~ "variant",
     "lineage" %in% names(metadata_tsv_df) ~ "lineage",
     "community_lineage" %in% names(metadata_tsv_df) ~ "community_lineage",
     "lineage_phylo" %in% names(metadata_tsv_df) ~ "lineage_phylo",
@@ -1101,10 +1105,10 @@ triage_tbl %>%
     `Agree`         = case_when(is.na(clade_agree_blast) ~ "—",
                                 clade_agree_blast ~ "✓", TRUE ~ "✗"),
     `BLAST top hit` = if_else(!is.na(sseqid), sseqid, "—"),
-    `BLAST lineage` = if_else(!is.na(blast_lineage), blast_lineage, "—"),
+    `BLAST variant` = if_else(!is.na(blast_lineage), blast_lineage, "—"),
     `BLAST SNPs`    = if_else(!is.na(blast_mismatch), as.character(blast_mismatch), "—"),
-    `DB lineage count` = if_else(!is.na(db_lineage_count), as.character(db_lineage_count), "—"),
-    `Similar BLAST lineage` = if_else(similar_lineages_msg != "", similar_lineages_msg, "—"),
+    `DB variant count` = if_else(!is.na(db_lineage_count), as.character(db_lineage_count), "—"),
+    `Similar BLAST variant` = if_else(similar_lineages_msg != "", similar_lineages_msg, "—"),
     `Input length`  = if_else(!is.na(input_length), as.character(input_length), "—"),
     `Called %`      = if_else(!is.na(called_frac), percent(called_frac, 1), "—"),
     `Flag`          = cell_spec(flag, color = "white", background = .flag_col[flag], bold = TRUE),
@@ -1146,16 +1150,16 @@ triage_tbl %>%
 .triage_display %>%
   kbl(escape = FALSE,
       table.attr = 'style="width: auto;"',
-      caption = "Batch overview — sorted with items needing review first. Green = clear, red = genotype disagreement, grey = no NextClade call (usually low coverage). Called % = percentage of sequence bases that are unambiguous (A/C/G/T; excludes N and other ambiguous codes). DB lineage count = number of sequences in reference database with same BLAST lineage.") %>%
+      caption = "Batch overview — sorted with items needing review first. Green = clear, red = genotype disagreement, grey = no NextClade call (usually low coverage). Called % = percentage of sequence bases that are unambiguous (A/C/G/T; excludes N and other ambiguous codes). DB variant count = number of sequences in reference database with same BLAST variant.") %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE) %>%
   column_spec(1, width = "10em", extra_css = "white-space: nowrap;") %>%  # LabWareID
   column_spec(2, width = "12em", extra_css = "white-space: nowrap;") %>%  # SequenceID
   column_spec(3, width = "10em", extra_css = "white-space: nowrap;") %>%  # Genotype (NC)
   column_spec(4, width = "12em", extra_css = "white-space: nowrap;") %>%  # Genotype (BLAST)
   column_spec(6, width = "14em", extra_css = "white-space: nowrap;") %>%  # BLAST top hit
-  column_spec(7, width = "16em", extra_css = "white-space: nowrap;") %>%  # BLAST lineage
+  column_spec(7, width = "16em", extra_css = "white-space: nowrap;") %>%  # BLAST variant
   column_spec(8, background = .snp_colors, bold = TRUE) %>%  # Color code BLAST SNPs
-  column_spec(10, width = "20em", extra_css = "min-width: 18em; white-space: normal; line-height: 1.2; word-break: break-word;") %>%  # Similar BLAST lineage
+  column_spec(10, width = "20em", extra_css = "min-width: 18em; white-space: normal; line-height: 1.2; word-break: break-word;") %>%  # Similar BLAST variant
   column_spec(11, background = .input_length_colors) %>%  # Color code Input length
   scroll_box(width = "100%")
 ```
@@ -1368,7 +1372,7 @@ summary_tbl %>%
     `BLAST %id`       = blast_pident,
     `BLAST SNPs`      = blast_mismatch,
     `BLAST qcov%`     = blast_qcovs,
-    `BLAST lineage`   = blast_lineage
+    `BLAST variant`   = blast_lineage
   ) -> summary_display
 
 # Calculate background colors for BLAST SNPs column
@@ -1429,13 +1433,13 @@ if (nrow(blast_raw) > 0) {
     ) %>%
     rename_with(~case_when(
       . == "hit_genotype" ~ "Genotype",
-      . == "hit_lineage" ~ "Lineage",
+      . == "hit_lineage" ~ "Variant",
       . == "hit_date" ~ "Date",
       TRUE ~ .
     )) %>%
     mutate(
       `% identity` = round(`% identity`, 2),
-      across(any_of(c("Genotype", "Lineage", "Date")), 
+      across(any_of(c("Genotype", "Variant", "Date")), 
              ~replace_na(as.character(.), "—"))
     ) %>%
     kbl() %>%
@@ -1467,11 +1471,15 @@ suppressPackageStartupMessages({
 
 # ── Shared setup ──────────────────────────────────────────────────────────────
 ref_meta <- meta %>%
-  select(id, genotype, lineage, lineage_phylo, date) %>%
+  select(id, genotype, variant) %>%
   mutate(
-    id_norm       = norm_id(id),
-    genotype      = str_to_upper(genotype),
-    lineage_phylo = if_else(is.na(lineage_phylo) | lineage_phylo == "", NA_character_, lineage_phylo)
+    id_norm = norm_id(id),
+    genotype = str_to_upper(genotype),
+    variant = if_else(
+      is.na(variant) | variant == "",
+      NA_character_,
+      variant
+    )
   )
 
 query_lp <- nc_lineages %>%
@@ -1585,7 +1593,7 @@ if (length(query_ids) == 0) {
   cat(sprintf("bash scripts/build_per_seq_trees.sh %s %s\n", params$batch_dir, params$dataset_date))
   cat("```\n\n")
   cat("Short-region alignment inspection is still available in section 0 under **Junction alignment (focused viewer)**.\n\n")
-} else {
+} else { # tree or alignment files are available
 for (i in seq_along(query_ids)) {
   query_id <- query_ids[i]
   query_id_norm <- query_ids_normalized[i]
@@ -1654,48 +1662,90 @@ for (i in seq_along(query_ids)) {
       # use_cladogram_view <- long_branch_ratio > 25 && max_edge_len > 0.05
       use_cladogram_view <- FALSE
 
-      tip_info <- tibble(id = tr$tip.label) %>%
-        left_join(ref_meta %>% select(id_norm, genotype, lineage, lineage_phylo, date),
-                  by = c("id" = "id_norm")) %>%
-        left_join(query_lp %>% dplyr::rename(id = seqName, lineage_phylo_q = lineage_phylo),
-                  by = "id") %>%
-        left_join(community_meta, by = "id") %>%
-        mutate(
-          lineage_phylo = coalesce(lineage_phylo_q, lineage_phylo, community_lineage_phylo),
-          genotype      = coalesce(genotype, community_clade),
-          is_query  = id == query_id,
-          tip_label = case_when(
-            !is.na(genotype) & !is.na(lineage_phylo) & !is.na(lineage) & lineage != "NA" ~
-              paste0(id, "  [", genotype, "  ", lineage, "  /  ", lineage_phylo, "]"),
-            !is.na(genotype) & !is.na(lineage_phylo) & !is.na(community_clade) ~
-              paste0(id, "  [", genotype, "  /  ", lineage_phylo, "]"),
-            !is.na(genotype) & !is.na(lineage_phylo) ~
-              paste0(id, "  [", genotype, "  /  ", lineage_phylo, "]"),
-            !is.na(genotype) & !is.na(lineage) & lineage != "NA" ~
-              paste0(id, "  [", genotype, "  ", lineage, "]"),
-            !is.na(genotype) ~
-              paste0(id, "  [", genotype, "]"),
-            !is.na(lineage_phylo) & !is.na(lineage) & lineage != "NA" ~
-              paste0(id, "  [", lineage, "  /  ", lineage_phylo, "]"),
-            !is.na(lineage_phylo) & !is.na(community_clade) ~
-              paste0(id, "  [", community_clade, "  /  ", lineage_phylo, "]"),
-            !is.na(lineage_phylo) ~
-              paste0(id, "  [", lineage_phylo, "]"),
-            !is.na(lineage) & lineage != "NA" ~
-              paste0(id, "  [", lineage, "]"),
-            !is.na(community_clade) ~
-              paste0(id, "  [", community_clade, "]"),
-            TRUE ~ id
-          ),
-          tip_color = case_when(
-            is_query                               ~ "Query",
-            !is.na(lineage) & lineage != "NA"      ~ lineage,
-            !is.na(genotype) & genotype != "NA"    ~ genotype,
-            !is.na(community_clade)                ~ community_clade,
-            TRUE ~ "Unknown"
-          ),
-          date_show = if_else(!is.na(date) & date != "NA", date, "—")
-        )
+tip_info <- tibble(id = tr$tip.label) %>%
+  left_join(
+    ref_meta %>%
+      select(id_norm, genotype, variant),
+    by = c("id" = "id_norm")
+  ) %>%
+  left_join(
+    query_lp %>%
+      dplyr::rename(
+        id = seqName,
+        lineage_phylo_q = lineage_phylo
+      ),
+    by = "id"
+  ) %>%
+  left_join(
+    community_meta,
+    by = "id"
+  ) %>%
+  mutate(
+    lineage_phylo = coalesce(
+      lineage_phylo_q,
+      community_lineage_phylo
+    ),
+
+    genotype = coalesce(
+      genotype,
+      community_clade
+    ),
+
+    is_query = id == query_id,
+
+    tip_label = case_when(
+      !is.na(genotype) &
+        !is.na(variant) &
+        !is.na(lineage_phylo) ~
+        paste0(
+          id, "  [", genotype, "  ", variant,
+          "  /  ", lineage_phylo, "]"
+        ),
+
+      !is.na(genotype) &
+        !is.na(lineage_phylo) ~
+        paste0(
+          id, "  [", genotype,
+          "  /  ", lineage_phylo, "]"
+        ),
+
+      !is.na(genotype) &
+        !is.na(variant) ~
+        paste0(
+          id, "  [", genotype,
+          "  ", variant, "]"
+        ),
+
+      !is.na(genotype) ~
+        paste0(id, "  [", genotype, "]"),
+
+      !is.na(variant) &
+        !is.na(lineage_phylo) ~
+        paste0(
+          id, "  [", variant,
+          "  /  ", lineage_phylo, "]"
+        ),
+
+      !is.na(lineage_phylo) ~
+        paste0(id, "  [", lineage_phylo, "]"),
+
+      !is.na(variant) ~
+        paste0(id, "  [", variant, "]"),
+
+      !is.na(community_clade) ~
+        paste0(id, "  [", community_clade, "]"),
+
+      TRUE ~ id
+    ),
+
+    tip_color = case_when(
+      is_query ~ "Query",
+      !is.na(variant) & variant != "" ~ variant,
+      !is.na(genotype) & genotype != "NA" ~ genotype,
+      !is.na(community_clade) ~ community_clade,
+      TRUE ~ "Unknown"
+    )
+  )
 
       all_colors <- unique(tip_info$tip_color)
       ref_colors <- setdiff(all_colors, "Query")
@@ -1713,7 +1763,7 @@ for (i in seq_along(query_ids)) {
         ) %<+% tip_info +
           geom_tippoint(aes(color = tip_color), size = 3) +
           geom_tiplab(aes(label = tip_label), size = 2.6, align = TRUE, linetype = NA, offset = 0.15) +
-          scale_color_manual(values = pal, name = "Lineage") +
+          scale_color_manual(values = pal, name = "Variant") +
           guides(color = guide_legend(ncol = 2)) +
           theme_void() +
           theme(legend.position = "bottom", plot.margin = margin(5, 5, 5, 5))
@@ -1725,7 +1775,7 @@ for (i in seq_along(query_ids)) {
         ) %<+% tip_info +
           geom_tippoint(aes(color = tip_color), size = 3) +
           geom_tiplab(aes(label = tip_label), size = 2.8, hjust = -0.05) +
-          scale_color_manual(values = pal, name = "Lineage") +
+          scale_color_manual(values = pal, name = "Variant") +
           guides(color = guide_legend(ncol = 2)) +
           theme_tree2() +
           theme(legend.position = "bottom", plot.margin = margin(5, 5, 5, 5)) +
@@ -1751,13 +1801,25 @@ for (i in seq_along(query_ids)) {
       }
       cat("\n")
 
-      meta_tbl <- tip_info %>%
-        arrange(desc(is_query), tip_color, id) %>%
-        select(ID = id, Lineage = lineage, Lineage_phylo = lineage_phylo,
-               Genotype = genotype, Date = date_show) %>%
-        mutate(across(c(Lineage, Lineage_phylo, Genotype),
-                      ~if_else(is.na(.) | . %in% c("NA", ""), "—",
-                               str_to_upper(as.character(.)))))
+meta_tbl <- tip_info %>%
+  arrange(desc(is_query), tip_color, id) %>%
+  select(
+    ID = id,
+    Variant = variant,
+    Lineage_phylo = lineage_phylo,
+    Genotype = genotype
+  ) %>%
+  mutate(
+    across(
+      c(Variant, Lineage_phylo, Genotype),
+      ~ if_else(
+        is.na(.x) | .x %in% c("NA", ""),
+        "—",
+        as.character(.x)
+      )
+    )
+  )
+
       cat(kbl(meta_tbl, caption = paste("Sequences in tree:", query_id)) %>%
             kable_styling(bootstrap_options = c("striped", "condensed"),
                           full_width = FALSE, font_size = 11) %>%
@@ -1796,6 +1858,7 @@ for (i in seq_along(query_ids)) {
     }
 
     heat_lineage_col <- case_when(
+      "variant" %in% names(meta) ~ "variant",
       "lineage" %in% names(meta) ~ "lineage",
       "community_lineage" %in% names(meta) ~ "community_lineage",
       "lineage_phylo" %in% names(meta) ~ "lineage_phylo",
@@ -1803,9 +1866,17 @@ for (i in seq_along(query_ids)) {
     )
 
     ref_meta_hm <- if (!is.na(heat_lineage_col) && nrow(meta) > 0) {
-      meta %>% transmute(id, hm_lineage = as.character(.data[[heat_lineage_col]]))
+      meta %>% transmute(
+        id, 
+        hm_variant = as.character(.data[[heat_lineage_col]]),
+        hm_genotype = if ("genotype" %in% names(meta)) {
+          as.character(genotype)
+        } else {
+          NA_character_
+        }
+      )
     } else {
-      tibble(id = character(), hm_lineage = character())
+      tibble(id = character(), hm_variant = character(), hm_genotype = character())
     }
 
     lbl_tbl <- tibble(id = ids) %>%
@@ -1813,8 +1884,8 @@ for (i in seq_along(query_ids)) {
       left_join(community_meta, by = "id") %>%
       mutate(
         lineage_phylo = community_lineage_phylo,
-        lineage       = coalesce(hm_lineage, community_clade),
-        genotype      = coalesce(hm_lineage, community_clade),  # Use same as lineage for genotype field
+        variant       = hm_variant,
+        genotype      = coalesce(harmonise_genotype(hm_genotype), community_clade),  # Use same as lineage for genotype field
         lineage_phylo = if_else(is.na(lineage_phylo) | lineage_phylo == "",
                                 NA_character_, lineage_phylo),
         # Shorten long FASTA headers: extract accession + isolate/strain name
@@ -1833,21 +1904,49 @@ for (i in seq_along(query_ids)) {
                  accession)
         },
         display = case_when(
-          id == query_id ~ paste0(short_id, "  \u2605"),
-          !is.na(genotype) & !is.na(lineage_phylo) & !is.na(lineage) & lineage != "NA" ~
-            paste0(short_id, "  [", genotype, "  ", lineage, "  /  ", lineage_phylo, "]"),
-          !is.na(genotype) & !is.na(lineage_phylo) ~
-            paste0(short_id, "  [", genotype, "  /  ", lineage_phylo, "]"),
-          !is.na(genotype) & !is.na(lineage) & lineage != "NA" ~
-            paste0(short_id, "  [", genotype, "  ", lineage, "]"),
-          !is.na(genotype) ~
-            paste0(short_id, "  [", genotype, "]"),
-          !is.na(lineage_phylo) & !is.na(lineage) & lineage != "NA" ~
-            paste0(short_id, "  [", lineage, "  /  ", lineage_phylo, "]"),
-          !is.na(lineage_phylo) ~ paste0(short_id, "  [", lineage_phylo, "]"),
-          !is.na(lineage) & lineage != "NA" ~ paste0(short_id, "  [", lineage, "]"),
-          TRUE ~ short_id
-        )
+  id == query_id ~
+    paste0(short_id, "  \u2605"),
+
+  !is.na(genotype) &
+    !is.na(variant) &
+    !is.na(lineage_phylo) ~
+    paste0(
+      short_id, "  [", genotype, "  ",
+      variant, "  /  ", lineage_phylo, "]"
+    ),
+
+  !is.na(genotype) &
+    !is.na(lineage_phylo) ~
+    paste0(
+      short_id, "  [", genotype,
+      "  /  ", lineage_phylo, "]"
+    ),
+
+  !is.na(genotype) &
+    !is.na(variant) ~
+    paste0(
+      short_id, "  [", genotype,
+      "  ", variant, "]"
+    ),
+
+  !is.na(genotype) ~
+    paste0(short_id, "  [", genotype, "]"),
+
+  !is.na(variant) &
+    !is.na(lineage_phylo) ~
+    paste0(
+      short_id, "  [", variant,
+      "  /  ", lineage_phylo, "]"
+    ),
+
+  !is.na(variant) ~
+    paste0(short_id, "  [", variant, "]"),
+
+  !is.na(lineage_phylo) ~
+    paste0(short_id, "  [", lineage_phylo, "]"),
+
+  TRUE ~ short_id
+)
       )
     lbl_map <- setNames(lbl_tbl$display, lbl_tbl$id)
     rownames(snp_mat) <- lbl_map[rownames(snp_mat)]
@@ -1915,7 +2014,7 @@ for (i in seq_along(query_ids)) {
     cat("[Download SNP distance matrix](snp_matrices/", query_id, "_snp_distances.tsv)\n\n", sep = "")
     
     cat("\n\n")
-  }
+  } # end SNP heatmap display
 
   # ── 3. Alignment diagnostics (Panel E only) ───────────────────────────────
   cat("### Alignment diagnostics\n\n")
@@ -1997,55 +2096,76 @@ for (i in seq_along(query_ids)) {
     mat_ord <- mat[seq_order, , drop = FALSE]
 
     label_tbl <- tibble(id = seq_order) %>%
-      left_join(ref_meta %>% select(id_norm, lineage, lineage_phylo, genotype), by = c("id" = "id_norm")) %>%
-      left_join(community_meta, by = "id") %>%
-      mutate(
-        # True database variant (e.g. NOR-2024-V6b) — kept separate from the
-        # community-clade fallback below so it isn't confused with genotype/clade.
-        variant       = lineage,
-        lineage_phylo = coalesce(lineage_phylo, community_lineage_phylo),
-        lineage       = coalesce(lineage, community_clade),
-        genotype      = coalesce(genotype, community_clade),
-        # Flag if this is a batch sequence
-        is_batch = id %in% query_ids_normalized,
-        # Shorten long FASTA headers: extract accession + isolate/strain name
-        short_id = {
-          accession <- str_extract(id, "^[^\\s]+")
-          # Extract isolate/strain name: try "isolate" pattern, then "strain:" pattern
-          isolate_m1 <- str_extract(id, "(?<= isolate )[^ ,]+")
-          isolate_m2 <- str_extract(id, "(?<=strain: )[^ ,]+")
-          isolate_part <- coalesce(isolate_m1, isolate_m2)
-          
-          if_else(!is.na(isolate_part),
-                 paste0(accession, " (", isolate_part, ")"),
-                 accession)
-        },
-        # Genotype/lineage_phylo tag, with the real variant appended when known
-        # (this is what surfaces the variant for BLAST top hits from the database)
-        tag = case_when(
-          !is.na(genotype) & !is.na(lineage_phylo) ~ paste0(genotype, "  /  ", lineage_phylo),
-          !is.na(genotype) ~ genotype,
-          !is.na(lineage_phylo) ~ lineage_phylo,
-          !is.na(lineage) ~ lineage,
-          TRUE ~ NA_character_
-        ),
-        tag = case_when(
-          !is.na(variant) & !is.na(tag) ~ paste0(tag, "  |  ", variant),
-          !is.na(variant) ~ variant,
-          TRUE ~ tag
-        ),
-        prefix = case_when(
-          id == query_id & is_batch ~ " \u2605 QUERY",
-          is_batch                  ~ " \u25c6 BATCH",
-          id == query_id            ~ " \u2605",
-          TRUE ~ ""
-        ),
-        display = if_else(
-          !is.na(tag),
-          paste0(short_id, prefix, " [", tag, "]"),
-          paste0(short_id, prefix)
-        )
+  left_join(
+    ref_meta %>%
+      select(id_norm, variant, genotype),
+    by = c("id" = "id_norm")
+  ) %>%
+  left_join(
+    community_meta,
+    by = "id"
+  ) %>%
+  mutate(
+    lineage_phylo = community_lineage_phylo,
+
+    genotype = coalesce(
+      genotype,
+      community_clade
+    ),
+
+    is_batch = id %in% query_ids_normalized,
+
+    short_id = {
+      accession <- str_extract(id, "^[^\\s]+")
+      isolate_m1 <- str_extract(id, "(?<= isolate )[^ ,]+")
+      isolate_m2 <- str_extract(id, "(?<=strain: )[^ ,]+")
+      isolate_part <- coalesce(isolate_m1, isolate_m2)
+
+      if_else(
+        !is.na(isolate_part),
+        paste0(accession, " (", isolate_part, ")"),
+        accession
       )
+    },
+
+    tag = case_when(
+      !is.na(genotype) & !is.na(lineage_phylo) ~
+        paste0(genotype, "  /  ", lineage_phylo),
+
+      !is.na(genotype) ~
+        genotype,
+
+      !is.na(lineage_phylo) ~
+        lineage_phylo,
+
+      TRUE ~
+        NA_character_
+    ),
+
+    tag = case_when(
+      !is.na(variant) & !is.na(tag) ~
+        paste0(tag, "  |  ", variant),
+
+      !is.na(variant) ~
+        variant,
+
+      TRUE ~
+        tag
+    ),
+
+    prefix = case_when(
+      id == query_id & is_batch ~ " \u2605 QUERY",
+      is_batch ~ " \u25c6 BATCH",
+      id == query_id ~ " \u2605",
+      TRUE ~ ""
+    ),
+
+    display = if_else(
+      !is.na(tag),
+      paste0(short_id, prefix, " [", tag, "]"),
+      paste0(short_id, prefix)
+    )
+  )
     lbl_map <- setNames(label_tbl$display, label_tbl$id)
     disp_levels <- rev(lbl_map[seq_order])
 
@@ -2170,13 +2290,13 @@ for (i in seq_along(query_ids)) {
           ggsave(.tmp_zoom, plot = p_zoom, width = 14, height = fig_h_zoom, dpi = 150, limitsize = FALSE)
           .embed_img(.tmp_zoom)
           file.remove(.tmp_zoom)
-        }
+        } # end zoom window display
         cat("\n")
-      }
-    }
-  }
-}
-}
+      } # end zoom windows loop
+    } # end called-site coverage check
+  } # end alignment diagnostics section
+} # end for each query sequence
+} # end query/tree availability check
 ```
 
 ---
@@ -2190,10 +2310,14 @@ dataset_year <- as.numeric(substr(params$dataset_date, 1, 4))
 lineage_year <- as.numeric(format(Sys.Date(), "%Y"))
 
 # Check latest lineage in database by NOR-YYYY pattern
-if (nrow(meta) > 0 && "lineage" %in% names(meta)) {
+if (nrow(meta) > 0 && "variant" %in% names(meta)) {
   db_lineages <- meta %>%
-    filter(!is.na(lineage), grepl("^NOR-", lineage)) %>%
-    pull(lineage) %>%
+    filter(
+      !is.na(variant), 
+      variant !="",
+      grepl("^NOR-", variant)
+      ) %>%
+    pull(variant) %>%
     unique()
   
   current_year_lineages <- db_lineages[grepl(paste0("^NOR-", lineage_year), db_lineages)]
@@ -2262,7 +2386,7 @@ if (nrow(meta) > 0 && "lineage" %in% names(meta)) {
 }
 
 # Build lineage suggestions table with smart b/c suffix suggestion
-if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "lineage" %in% names(meta)) {
+if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
   # Function to suggest next available suffix (b, c, d, etc.)
   suggest_suffix <- function(base_lineage, existing_lineages) {
     # Get all variants of this lineage in the database
@@ -2294,10 +2418,11 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "lineage" %in% names(meta)) {
     return("b")
   }
   
+
   all_db_lineages <- meta %>%
-    filter(!is.na(lineage)) %>%
-    pull(lineage) %>%
-    unique()
+  filter(!is.na(variant), variant != "") %>%
+  pull(variant) %>%
+  unique()
   
   lineage_suggestions <- summary_tbl %>%
     select(seqName, clade, blast_genotype, blast_lineage, blast_mismatch, sseqid) %>%
@@ -2326,8 +2451,8 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "lineage" %in% names(meta)) {
       Genotype = clade,
       `BLAST hit` = sseqid,
       `SNPs` = blast_mismatch,
-      `Hit lineage` = blast_lineage,
-      `Suggested lineage` = lineage_suggestion,
+      `Hit variant` = blast_lineage,
+      `Suggested variant` = lineage_suggestion,
       Notes = notes
     )
   
@@ -2374,8 +2499,8 @@ if (length(batch_seqs_in_alignment) < 2) {
       # Re-check if files were created
       batch_tree_available <- file.exists(batch_tree_file) && file.info(batch_tree_file)$size > 0
       batch_aln_available <- file.exists(batch_aln_file_aligned) && file.info(batch_aln_file_aligned)$size > 0
-    }
-  }
+    } # end auto-generate batch analysis
+  } # end batch file availability check
   cat("## Batch phylogenetic tree\n\n")
   
   batch_tree_obj <- NULL
@@ -2397,7 +2522,8 @@ if (length(batch_seqs_in_alignment) < 2) {
     cat("3. Infer phylogenetic tree with IQ-TREE\n")
     cat("4. Compute SNP distance matrix\n\n")
     cat("After running, re-generate this report to include batch phylogenetics.\n\n")
-  } else {
+  }  else {
+  # end batch tree availability check 
     # We have the batch tree - visualize it
     batch_tree_obj <- phangorn::midpoint(batch_tree_obj)
     
@@ -2434,7 +2560,7 @@ if (length(batch_seqs_in_alignment) < 2) {
     ggsave(.tmp_batch_tree, plot = p_batch, width = 14, height = 8, dpi = 150)
     cat(sprintf('<img src="%s" style="width:100%%;"/>\n\n', knitr::image_uri(.tmp_batch_tree)))
     file.remove(.tmp_batch_tree)
-  }
+  } # end batch tree visualization
   
   cat("## Batch SNP distance heatmap\n\n")
   
@@ -2524,13 +2650,14 @@ if (length(batch_seqs_in_alignment) < 2) {
     cat(sprintf('<img src="%s" style="width:100%%;"/>\n\n', knitr::image_uri(.tmp_batch_heat)))
     file.remove(.tmp_batch_heat)
   } else {
+  # end batch SNP heatmap display
     cat("*Batch SNP distance matrix could not be computed. Run the batch analysis script to generate:*\n\n")
     cat("```bash\n")
     cat("bash scripts/build_batch_analysis.sh ")
     cat(sprintf("'%s' '%s' '%s'\n", params$batch_dir, params$dataset_date, params$out_base))
     cat("```\n\n")
-  }
-}
+  } # end batch SNP fallback
+} # end batch size check
 ```
 
 ---
@@ -2585,12 +2712,12 @@ batch_variants <- blast_data %>%
   mutate(sseqid_norm = norm_id(sseqid)) %>%
   left_join(
     meta %>%
-      filter(!is.na(lineage)) %>%
-      mutate(id_norm = norm_id(id)) %>%
-      select(id_norm, lineage),
+    filter(!is.na(variant), variant != "") %>%
+    mutate(id_norm = norm_id(id)) %>%
+    select(id_norm, variant),
     by = c("sseqid_norm" = "id_norm")
   ) %>%
-  select(seqName = qseqid, variant = lineage) %>%
+  select(seqName = qseqid, variant) %>%
   filter(!is.na(variant)) %>%
   # Group by base variant
   mutate(base_variant = extract_base_variant(variant))
@@ -2606,10 +2733,10 @@ batch_variant_summary <- batch_variants %>%
   rename(lineage = base_variant)
 
 # Add database counts for context
-if (nrow(meta) > 0 && "lineage" %in% names(meta)) {
+if (nrow(meta) > 0 && "variant" %in% names(meta)) {
   db_variant_summary <- meta %>%
-    filter(!is.na(lineage)) %>%
-    mutate(base_variant = extract_base_variant(lineage)) %>%
+    filter(!is.na(variant), variant != "") %>%
+    mutate(base_variant = extract_base_variant(variant)) %>%
     group_by(base_variant) %>%
     summarise(
       n_db = n(),
@@ -2699,28 +2826,52 @@ if (nrow(outbreak_candidates) == 0) {
         cat("\n\n")
         
         # Show database sequences with this variant
-        db_seqs_for_variant <- meta %>%
-          filter(!is.na(lineage)) %>%
-          mutate(base_var = extract_base_variant(lineage)) %>%
-          filter(base_var == variant_name) %>%
-          select(id, lineage, genotype, date)
-        
-        if (nrow(db_seqs_for_variant) > 0) {
-          cat("**Database sequences with this variant:**\n\n")
-          db_display <- db_seqs_for_variant %>%
-            select(
-              `ID` = id,
-              `Variant` = lineage,
-              `Genotype` = genotype,
-              `Date` = date
-            )
-          cat(db_display %>%
-                kbl() %>%
-                kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
-                as.character())
-          cat("\n\n")
-        }
-      }
+db_seqs_for_variant <- meta %>%
+  filter(!is.na(variant), variant != "") %>%
+  mutate(
+    base_var = extract_base_variant(variant)
+  ) %>%
+  filter(base_var == variant_name) %>%
+  select(
+    id,
+    variant,
+    genotype,
+    any_of("date")
+  )
+
+if (nrow(db_seqs_for_variant) > 0) {
+  cat("**Database sequences with this variant:**\n\n")
+
+  db_display <- db_seqs_for_variant %>%
+    rename(
+      ID = id,
+      Variant = variant,
+      Genotype = genotype
+    )
+
+  if ("date" %in% names(db_display)) {
+    db_display <- db_display %>%
+      rename(Date = date)
+  }
+
+  cat(
+    db_display %>%
+      kbl() %>%
+      kable_styling(
+        bootstrap_options = c(
+          "striped",
+          "hover",
+          "condensed"
+        ),
+        full_width = TRUE
+      ) %>%
+      as.character()
+  )
+
+  cat("\n\n")
+} # end database sequences display
+
+      } # end for each png_file (outbreak trees)
     } else {
       cat("*Outbreak tree images were not generated. Run:*\n\n")
       cat("```bash\n")
@@ -2734,8 +2885,8 @@ if (nrow(outbreak_candidates) == 0) {
     cat(sprintf("Rscript scripts/build_outbreak_trees.R '%s' '%s' '%s'\n",
                 params$out_base, params$dataset_date, params$dataset_dir))
     cat("```\n\n")
-  }
-}
+  } # end outbreak_trees_dir check
+} # end outbreak detection
 ```
 
 ---
