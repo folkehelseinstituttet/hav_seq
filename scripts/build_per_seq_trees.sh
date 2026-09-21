@@ -18,7 +18,7 @@
 #   <batch_fa>     Path to batch FASTA file
 #
 # BLAST neighbor selection strategy:
-#   - Lineages from metadata_corrected.tsv are used to group hits
+#   - Lineages from metadata.tsv are used to group hits
 #   - Maximum 2 sequences per lineage (prevents over-representation of common variants)
 #   - Remaining slots filled by NextClade community tree neighbors
 #
@@ -50,7 +50,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEDUP_FA="$DATASET_DIR/blast_db/input_dedup.fa"
 BLAST_DB="$DATASET_DIR/blast_db/hav"
-METADATA_TSV="$DATASET_DIR/metadata_corrected.tsv"
+METADATA_TSV="$DATASET_DIR/metadata.tsv"
 
 BATCH_NAME=$(basename "$BATCH_DIR")
 TREES_DIR="$OUT_BASE/trees"
