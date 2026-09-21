@@ -252,10 +252,12 @@ if [[ ! -x "$RSCRIPT" ]]; then
   echo "ERROR: Rscript not found at $RSCRIPT" >&2; exit 1
 fi
 
-if [[ ! -d "$DATASET_DIR" ]]; then
-  echo "ERROR: Local dataset not found: $DATASET_DIR" >&2
-  echo "  Build with: bash scripts/make_blast_db.sh $DATASET_DATE" >&2
-  exit 1
+# Sjekk at HAV_lw_uttrekk.tsv finnes
+if [[ ! -f "$DATASET_DIR/HAV_lw_uttrekk.tsv" ]]; then
+    echo "ERROR: Mangler nødvendig fil: $DATASET_DIR/HAV_lw_uttrekk.tsv" >&2
+    echo "Kopier fil  fra V:\Prod\FromSecure\LW_Datauttrekk 
+                      til $DATASET_DIR" >&2
+    exit 1
 fi
 
 mkdir -p "$OUT_BASE"
@@ -293,6 +295,7 @@ echo "════════════════════════�
 REQUEST_DIR="/mnt/n/Virologi/Hepatitt/Hepatitt A/HAV genteknologi/Requests"
 echo "  Dataset Dir : $DATASET_DIR"
 echo "  Request Dir : $REQUEST_DIR"
+
 
 step "Preparing metadata"
 "$RSCRIPT" scripts/prepare_metadata.R "$REQUEST_DIR/Requests.xlsx" "$DATASET_DIR/HAV_lw_uttrekk.tsv" "$DATASET_DIR/metadata.tsv" || exit 1
