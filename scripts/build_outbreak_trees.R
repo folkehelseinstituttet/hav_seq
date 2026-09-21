@@ -63,7 +63,7 @@ log_msg("✓ Output directory exists")
 # Setup paths
 trees_dir <- file.path(output_dir, "trees")
 lineages_file <- file.path(output_dir, "lineages", "nextclade.tsv")
-dataset_meta <- file.path(dataset_dir, "metadata_corrected.tsv")
+dataset_meta <- file.path(dataset_dir, "metadata.tsv")
 outbreak_trees_dir <- file.path(output_dir, "outbreak_trees")
 
 if (!dir.exists(trees_dir)) {
