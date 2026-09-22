@@ -2,8 +2,7 @@ name: viroconstrictor
 # Nanopore amplicon assembly for the WGS pipeline. Invoked as
 # `conda run -n viroconstrictor` by scripts/run_pipeline.sh.
 channels:
-  - bioconda
   - conda-forge
-  - defaults
+  - bioconda
 dependencies:
   - viroconstrictor
