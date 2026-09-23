@@ -1,5 +1,0 @@
-lineage	genotype	founder_node	defining_nt_muts	num_sequences	earliest_date	latest_date	countries	outbreaks	notes	deprecated
-IIIA.1	IIIA	NODE_0000003	A180T,A222G,C240T,C337T,C84T,G201A,G225A,G300T,G315A,T105A,T147C,T342C,T3C,T6A	95	1990-00-00	2024-04-27	Australia,Denmark,Germany,Hungary,India,Italy,Japan,Norway,Russia,South Korea,Taiwan,USA			FALSE
-IIIA.1.1	IIIA	NODE_0000005	A249G,T237A,T333C	93	1990-00-00	2024-04-27	Australia,Denmark,Germany,Hungary,India,Italy,Japan,Norway,Russia,South Korea,Taiwan,USA			FALSE
-IIIA.1.1.1	IIIA	NODE_0000009	C3T,T33C	89	1990-00-00	2024-04-27	Australia,Denmark,Germany,Hungary,India,Italy,Japan,Norway,Russia,South Korea,Taiwan			FALSE
-IIIA.1.1.2	IIIA	NODE_0000007	G309A,T297C	3	2014-06-24	2019-04-00	Japan,USA			FALSE
