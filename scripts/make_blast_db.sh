@@ -20,14 +20,11 @@ set -euo pipefail
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 DATASET_DATE=$(date +%Y-%m-%d)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-#PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BASE_REL="/mnt/n/Virologi/Hepatitt/Hepatitt A/HAV genteknologi/Databaser"
-INPUT_FA="$BASE_REL/2PA.fa"
-DB_DIR="/mnt/n/Virologi/Hepatitt/Hepatitt A/HAV genteknologi/Databaser/local_datasets"
-#DB_DIR="$BASE_REL/blast_db"
+SCRIPT_DIR="$HAV_SEQ_REPO"
+BASE_REL="$2"
+INPUT_FA="$1"
+DB_DIR="$BASE_REL"
 DB_PATH="$DB_DIR/$DATASET_DATE"
-
 
 cd "$BASE_REL"
 

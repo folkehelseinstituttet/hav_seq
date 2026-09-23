@@ -65,14 +65,10 @@ set -euo pipefail
 #Hva med mount til N: ? Løser seg på NGS4. 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-RSCRIPT="$HOME/.conda/R_shared/bin/Rscript"
-LATEST_DATASET=$(basename "$(printf '%s\n' '/mnt/n/Virologi/Hepatitt/Hepatitt A/HAV genteknologi/Databaser/local_datasets'/* | sort | tail -n 1)")
-DEFAULT_DATASET_DATE="$LATEST_DATASET"
+
 DEFAULT_THREADS=4
 DEFAULT_N_NEIGHBORS=30
-BATCH_DIR="/mnt/n/Virologi/Hepatitt/Hepatitt A/HAV genteknologi"
-FASTA_DIR="Fasta"
-
+BATCH_DIR="$TMP_DIR"
 
 # ── Usage ─────────────────────────────────────────────────────────────────────
 usage() {
@@ -132,7 +128,6 @@ USAGE
 MODE=""
 BATCH_NAME=""
 YEAR=""
-DATASET_DATE="$DEFAULT_DATASET_DATE"
 THREADS="$DEFAULT_THREADS"
 N_NEIGHBORS="$DEFAULT_N_NEIGHBORS"
 SKIP_TREES=0
@@ -187,9 +182,7 @@ done
 
 
 # ── Resolve paths ─────────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BATCH_DIR="$BATCH_DIR/$YEAR/$BATCH_NAME"
+SCRIPT_DIR="$HAV_SEQ_REPO"
 
 # For Sanger mode, samplesheet will be auto-generated if not provided
 # For WGS mode, it will be validated later
@@ -202,11 +195,9 @@ fi
 
 FASTA_DIR="$BATCH_DIR/Fasta"
 BATCH_FA="$FASTA_DIR/$BATCH_NAME.fasta"
-OUT_BASE="$HOME/output"
+OUT_BASE="$HOME/$BATCH_NAME"
+DATASET_DIR="$TMP_DIR/local_datasets"
 
-DATASET_DIR="/mnt/n/Virologi/Hepatitt/Hepatitt A/HAV genteknologi/Databaser/local_datasets/$DATASET_DATE"
-
-cd "$PROJECT_DIR"
 
 # ── Validation ────────────────────────────────────────────────────────────────
 if [[ -z "$MODE" ]]; then
@@ -239,18 +230,7 @@ if [[ -n "$SAMPLESHEET" && ! -f "$SAMPLESHEET" ]]; then
   echo "ERROR: Samplesheet not found: $SAMPLESHEET" >&2; exit 1
 fi
 
-# HAVDEV tools must be on PATH
-for tool in nextclade blastn mafft; do
-  if ! command -v "$tool" &>/dev/null; then
-    echo "ERROR: '$tool' not found — activate the HAVDEV conda environment first." >&2
-    echo "  conda activate $PROJECT_DIR/.conda/HAVDEV" >&2
-    exit 1
-  fi
-done
 
-if [[ ! -x "$RSCRIPT" ]]; then
-  echo "ERROR: Rscript not found at $RSCRIPT" >&2; exit 1
-fi
 
 # Sjekk at HAV_lw_uttrekk.tsv finnes
 if [[ ! -f "$DATASET_DIR/HAV_lw_uttrekk.tsv" ]]; then
@@ -260,11 +240,31 @@ if [[ ! -f "$DATASET_DIR/HAV_lw_uttrekk.tsv" ]]; then
     exit 1
 fi
 
+# Ensure output directory exists
 mkdir -p "$OUT_BASE"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-LOGFILE="$OUT_BASE/hav_analyse.log"
-exec > >(tee -a "$LOGFILE") 2>&1
+LOGFILE="/home/ngs/hav_sequencing_wrapper.log"
+ERRORLOG="/home/ngs/hav_sequencing_wrapper.error.log"
+
+# Opprett loggfil hvis den ikke finnes
+if [[ ! -f "$LOGFILE" ]]; then
+    touch "$LOGFILE" || {
+        echo "ERROR: Could not create logfile: $LOGFILE" >&2
+        exit 1
+    }
+fi
+# Opprett error loggfil hvis den ikke finnes
+if [[ ! -f "$ERRORLOG" ]]; then
+    touch "$ERRORLOG" || {
+        echo "ERROR: Could not create error logfile: $ERRORLOG" >&2
+        exit 1
+    }
+fi
+
+exec > >(tee -a "$LOGFILE") \
+     2> >(tee -a "$LOGFILE" >> "$ERRORLOG")
+
 
 step() {
   echo ""
@@ -285,22 +285,27 @@ echo "  Threads   : $THREADS"
 echo "  Neighbors : $N_NEIGHBORS"
 echo "  Started   : $(date)"
 echo "  Log       : $LOGFILE"
+echo "  Error Log : $ERRORLOG"
 echo "  Output    : $OUT_BASE"
 echo "════════════════════════════════════════════════════════════════"
+
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# BUILD BLAST DATABASE
+# ════════════════════════════════════════════════════════════════════════════
+
+step "Build BLAST database"
+bash "$HAV_SEQ_REPO/build_blast_db.sh" "$TMP_DIR/2PA.fa" "$TMP_DIR/local_datasets" || exit 1
 
 # ════════════════════════════════════════════════════════════════════════════
 # PREPARE METADATA
 # ════════════════════════════════════════════════════════════════════════════
-
-REQUEST_DIR="/mnt/n/Virologi/Hepatitt/Hepatitt A/HAV genteknologi/Requests"
-echo "  Dataset Dir : $DATASET_DIR"
-echo "  Request Dir : $REQUEST_DIR"
-
-
+conda activate R_shared
 step "Preparing metadata"
-"$RSCRIPT" scripts/prepare_metadata.R "$REQUEST_DIR/Requests.xlsx" "$DATASET_DIR/HAV_lw_uttrekk.tsv" "$DATASET_DIR/metadata.tsv" || exit 1
-
-METADATA="$DATASET_DIR/metadata.tsv"
+Rscript "$HAV_SEQ_REPO/prepare_metadata.R" "$TMP_DIR/Requests.xlsx" "$TMP_DIR/HAV_lw_uttrekk.tsv" "$TMP_DIR/metadata.tsv" || exit 1
+conda deactivate
+METADATA="$TMP_DIR/metadata.tsv"
 
 # ════════════════════════════════════════════════════════════════════════════
 # WGS BRANCH
@@ -344,12 +349,12 @@ if [[ "$MODE" == "sanger" ]]; then
   if [[ -z "$SAMPLESHEET" ]] || [[ ! -f "$SAMPLESHEET" ]]; then
     step "Sanger 1/2: Generate samplesheet from FASTA directory"
     AUTO_SAMPLESHEET="$BATCH_DIR/auto_samplesheet.tsv"
-    "$RSCRIPT" scripts/generate_samplesheet.R "$FASTA_DIR" "$AUTO_SAMPLESHEET" || exit 1
+    Rscript scripts/generate_samplesheet.R "$FASTA_DIR" "$AUTO_SAMPLESHEET" || exit 1
     SAMPLESHEET="$AUTO_SAMPLESHEET"
   fi
 
   step "Sanger 2/2: Prepare batch FASTA from samplesheet"
-  "$RSCRIPT" scripts/prepare_input_fasta.R "$FASTA_DIR" "$SAMPLESHEET" "$BATCH_FA"
+  Rscript scripts/prepare_input_fasta.R "$FASTA_DIR" "$SAMPLESHEET" "$BATCH_FA"
   if [[ ! -f "$BATCH_FA" ]]; then
     echo "ERROR: prepare_input_fasta.R completed but $BATCH_FA was not created." >&2
     exit 1
