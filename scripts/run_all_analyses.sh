@@ -229,15 +229,14 @@ echo "────────────────────────�
 
 # blast_batch.sh writes directly to OUT_BASE
 # Pass arguments directly to preserve spaces in paths
-conda activate BLAST
-bash scripts/blast_batch.sh "$ANALYSIS_FA" "$DATASET_DATE" "$DATASET_DIR" "$OUT_BASE"
+
+conda run -n BLAST bash scripts/blast_batch.sh "$ANALYSIS_FA" "$DATASET_DATE" "$DATASET_DIR" "$OUT_BASE"
 echo ""
-conda deactivate
 
 # ── Analysis 2: NextClade (lineages dataset) ──────────────────────────────────
 echo "▶ Step 2/6: NextClade — lineages dataset (clade + lineage_phylo)"
 echo "─────────────────────────────────────────────────────────────────"
-conda activate NEXTCLADE
+
 LINEAGES_OUT="$OUT_BASE/lineages"
 mkdir -p "$LINEAGES_OUT"
 
@@ -246,7 +245,7 @@ if [[ ! -d "$LINEAGES_DATASET" ]]; then
   exit 1
 fi
 # Pass arguments directly to preserve spaces in paths
-nextclade run \
+conda run -n NEXTCLADE nextclade run \
   --input-dataset    "$LINEAGES_DATASET" \
   --alignment-preset high-diversity \
   --output-all       "$LINEAGES_OUT" \
@@ -258,14 +257,14 @@ echo "  Results → $LINEAGES_OUT/nextclade.tsv"
 N_SEQS=$(tail -n +2 "$LINEAGES_OUT/nextclade.tsv" | wc -l)
 echo "  Sequences processed: $N_SEQS"
 echo ""
-conda deactivate
+
 
 # ── Analysis 3: Per-sequence trees ────────────────────────────────────────────
 echo "▶ Step 3/6: Per-sequence trees (IQ-TREE with nearest neighbors)"
 echo "─────────────────────────────────────────────────────────────────"
-conda activate iqtree-mafft
+
 # Pass arguments directly to preserve spaces in paths
-bash scripts/build_per_seq_trees.sh "$BATCH_DIR" "$DATASET_DATE" 30 "$OUT_BASE" "$DATASET_DIR" "$BATCH_FA"
+conda run -n iqtree-mafft bash scripts/build_per_seq_trees.sh "$BATCH_DIR" "$DATASET_DATE" 30 "$OUT_BASE" "$DATASET_DIR" "$BATCH_FA"
 echo "  Results → $OUT_BASE/trees/"
 echo ""
 
@@ -274,18 +273,18 @@ echo ""
 echo "▶ Step 4/6: Batch-specific trees and SNP matrices"
 echo "─────────────────────────────────────────────────────────────────"
 # Pass arguments directly to preserve spaces in paths
-bash scripts/build_batch_analysis.sh "$BATCH_DIR" "$DATASET_DATE" "$OUT_BASE"
+conda run -n iqtree-mafft bash scripts/build_batch_analysis.sh "$BATCH_DIR" "$DATASET_DATE" "$OUT_BASE"
 echo "  Results → $OUT_BASE/trees/batch/"
 echo "  SNP matrix → $OUT_BASE/snp_matrices/batch_snp_distances.tsv"
 echo ""
-conda deactivate
+
 
 # ── Analysis 5: Outbreak-specific phylogenetics ────────────────────────────────
 echo "▶ Step 5/6: Outbreak lineage trees (batch + database sequences)"
 echo "─────────────────────────────────────────────────────────────────"
-conda activate R_shared
+
 # Pass arguments directly to preserve spaces in paths
-Rscript "$HAV_SEQ_REPO/build_outbreak_trees.R" "$OUT_BASE" "$DATASET_DATE" "$DATASET_DIR" || {
+conda run -n R_shared Rscript "$HAV_SEQ_REPO/build_outbreak_trees.R" "$OUT_BASE" "$DATASET_DATE" "$DATASET_DIR" || {
   echo "WARNING: Outbreak tree generation failed (report will not include lineage trees)"
 }
 echo "  Results → $OUT_BASE/outbreak_trees/"
@@ -297,7 +296,7 @@ echo "────────────────────────�
 
 REPORT_OUTPUT="$OUT_BASE/batch_report.html"
 # Pass arguments directly to preserve spaces in paths
-"$HAV_SEQ_REPO/Rscript" -e "
+conda run -n R_shared Rscript -e "
 rmarkdown::render(
   'scripts/batch_report.Rmd',
   output_file = '$REPORT_OUTPUT',
@@ -316,7 +315,6 @@ rmarkdown::render(
 echo "  Report written: $REPORT_OUTPUT"
 echo ""
 
-conda deactivate
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo "════════════════════════════════════════════════════════════════"

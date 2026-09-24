@@ -278,7 +278,7 @@ echo "  Batch     : $BATCH_NAME"
 echo "  Year      : $YEAR"
 echo "  Batch Dir       : $BATCH_DIR"
 echo "  Batch fasta dir : $FASTA_DIR"
-echo "  Samplesheet     : $SAMPLESHEET"
+#echo "  Samplesheet     : $SAMPLESHEET"
 echo "  Mode      : $MODE"
 #echo "  Dataset   : $DATASET_DATE"
 echo "  Threads   : $THREADS"
@@ -294,24 +294,24 @@ echo "════════════════════════�
 # ════════════════════════════════════════════════════════════════════════════
 # BUILD BLAST DATABASE
 # ════════════════════════════════════════════════════════════════════════════
-conda activate BLAST
+
 step "Build BLAST database"
-bash "$HAV_SEQ_REPO/build_blast_db.sh" "$TMP_DIR/2PA.fa" "$TMP_DIR/local_datasets" || exit 1
-conda deactivate
+conda run -n BLAST bash "$HAV_SEQ_REPO/build_blast_db.sh" "$TMP_DIR/2PA.fa" "$TMP_DIR/local_datasets" || exit 1
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # PREPARE METADATA
 # ════════════════════════════════════════════════════════════════════════════
-conda activate R_shared
+
 step "Preparing metadata"
-Rscript "$HAV_SEQ_REPO/prepare_metadata.R" "$TMP_DIR/Requests.xlsx" "$TMP_DIR/HAV_lw_uttrekk.tsv" "$TMP_DIR/metadata.tsv" || exit 1
-conda deactivate
+conda run -n R_shared Rscript "$HAV_SEQ_REPO/prepare_metadata.R" "$TMP_DIR/Requests.xlsx" "$TMP_DIR/HAV_lw_uttrekk.tsv" "$TMP_DIR/metadata.tsv" || exit 1
+
 METADATA="$TMP_DIR/metadata.tsv"
 
 # ════════════════════════════════════════════════════════════════════════════
 # WGS BRANCH
 # ════════════════════════════════════════════════════════════════════════════
-conda activate viroconstrictor
+#conda activate viroconstrictor
 if [[ "$MODE" == "wgs" ]]; then
 
   if [[ "$SKIP_ASSEMBLY" -eq 0 ]]; then
@@ -341,31 +341,30 @@ if [[ "$MODE" == "wgs" ]]; then
   echo "  Collected $N_SEQS consensus sequences → $BATCH_FA (headers trimmed to sample name)"
 
 fi
-conda deactivate
+#conda deactivate
 
 # ════════════════════════════════════════════════════════════════════════════
 # SANGER BRANCH
 # ════════════════════════════════════════════════════════════════════════════
-conda activate R_shared
 if [[ "$MODE" == "sanger" ]]; then
 
   # Auto-generate samplesheet from FASTA filenames if not provided
   if [[ -z "$SAMPLESHEET" ]] || [[ ! -f "$SAMPLESHEET" ]]; then
     step "Sanger 1/2: Generate samplesheet from FASTA directory"
     AUTO_SAMPLESHEET="$BATCH_DIR/auto_samplesheet.tsv"
-    Rscript "$HAV_SEQ_REPO/generate_samplesheet.R" "$FASTA_DIR" "$AUTO_SAMPLESHEET" || exit 1
+    conda run -n R_shared Rscript "$HAV_SEQ_REPO/generate_samplesheet.R" "$FASTA_DIR" "$AUTO_SAMPLESHEET" || exit 1
     SAMPLESHEET="$AUTO_SAMPLESHEET"
   fi
 
   step "Sanger 2/2: Prepare batch FASTA from samplesheet"
-  Rscript "$HAV_SEQ_REPO/prepare_input_fasta.R" "$FASTA_DIR" "$SAMPLESHEET" "$BATCH_FA"
+  conda run -n R_shared Rscript "$HAV_SEQ_REPO/prepare_input_fasta.R" "$FASTA_DIR" "$SAMPLESHEET" "$BATCH_FA"
   if [[ ! -f "$BATCH_FA" ]]; then
     echo "ERROR: prepare_input_fasta.R completed but $BATCH_FA was not created." >&2
     exit 1
   fi
 
 fi
-conda deactivate
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # COMMON STEPS — BLAST + NextClade → trees → report
