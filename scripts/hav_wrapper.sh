@@ -296,7 +296,7 @@ echo "════════════════════════�
 # ════════════════════════════════════════════════════════════════════════════
 
 step "Build BLAST database"
-conda run -n BLAST bash "$HAV_SEQ_REPO/scripts/build_blast_db.sh" "$TMP_DIR/2PA.fa" "$TMP_DIR/local_datasets" || exit 1
+conda run -n BLAST bash "$HAV_SEQ_REPO/scripts/make_blast_db.sh" "$TMP_DIR/2PA.fa" "$TMP_DIR/local_datasets" || exit 1
 
 
 # ════════════════════════════════════════════════════════════════════════════
