@@ -193,7 +193,7 @@ if [[ ${#SAMPLESHEET_ARRAY[@]} -gt 0 ]]; then
   SAMPLESHEET="${SAMPLESHEET_ARRAY[0]}"
 fi
 
-FASTA_DIR="$BATCH_DIR/Fasta"
+FASTA_DIR="$TMP_DIR/Fasta"
 BATCH_FA="$FASTA_DIR/$BATCH_NAME.fasta"
 OUT_BASE="$HOME/$BATCH_NAME"
 DATASET_DIR="$TMP_DIR/local_datasets"
@@ -233,10 +233,10 @@ fi
 
 
 # Sjekk at HAV_lw_uttrekk.tsv finnes
-if [[ ! -f "$DATASET_DIR/HAV_lw_uttrekk.tsv" ]]; then
-    echo "ERROR: Mangler nødvendig fil: $DATASET_DIR/HAV_lw_uttrekk.tsv" >&2
+if [[ ! -f "$TMP_DIR/HAV_lw_uttrekk.tsv" ]]; then
+    echo "ERROR: Mangler nødvendig fil: $TMP_DIR/HAV_lw_uttrekk.tsv" >&2
     echo "Kopier fil  fra V:\Prod\FromSecure\LW_Datauttrekk 
-                      til $DATASET_DIR" >&2
+                      til $TMP_DIR" >&2
     exit 1
 fi
 
@@ -294,9 +294,10 @@ echo "════════════════════════�
 # ════════════════════════════════════════════════════════════════════════════
 # BUILD BLAST DATABASE
 # ════════════════════════════════════════════════════════════════════════════
-
+conda activate BLAST
 step "Build BLAST database"
 bash "$HAV_SEQ_REPO/build_blast_db.sh" "$TMP_DIR/2PA.fa" "$TMP_DIR/local_datasets" || exit 1
+conda deactivate
 
 # ════════════════════════════════════════════════════════════════════════════
 # PREPARE METADATA
@@ -310,11 +311,12 @@ METADATA="$TMP_DIR/metadata.tsv"
 # ════════════════════════════════════════════════════════════════════════════
 # WGS BRANCH
 # ════════════════════════════════════════════════════════════════════════════
+conda activate viroconstrictor
 if [[ "$MODE" == "wgs" ]]; then
 
   if [[ "$SKIP_ASSEMBLY" -eq 0 ]]; then
     step "WGS 1/2: Nanopore QC + filtering + ViroConstrictor assembly"
-    bash scripts/run_pipeline.sh "$SAMPLESHEET" "$BATCH_ABS" "$THREADS"
+    bash "$HAV_SEQ_REPO/run_pipeline.sh" "$SAMPLESHEET" "$BATCH_ABS" "$THREADS"
     echo "  Samplesheet : $SAMPLESHEET"
   else
     echo ""
@@ -339,29 +341,31 @@ if [[ "$MODE" == "wgs" ]]; then
   echo "  Collected $N_SEQS consensus sequences → $BATCH_FA (headers trimmed to sample name)"
 
 fi
+conda deactivate
 
 # ════════════════════════════════════════════════════════════════════════════
 # SANGER BRANCH
 # ════════════════════════════════════════════════════════════════════════════
+conda activate R_shared
 if [[ "$MODE" == "sanger" ]]; then
 
   # Auto-generate samplesheet from FASTA filenames if not provided
   if [[ -z "$SAMPLESHEET" ]] || [[ ! -f "$SAMPLESHEET" ]]; then
     step "Sanger 1/2: Generate samplesheet from FASTA directory"
     AUTO_SAMPLESHEET="$BATCH_DIR/auto_samplesheet.tsv"
-    Rscript scripts/generate_samplesheet.R "$FASTA_DIR" "$AUTO_SAMPLESHEET" || exit 1
+    Rscript "$HAV_SEQ_REPO/generate_samplesheet.R" "$FASTA_DIR" "$AUTO_SAMPLESHEET" || exit 1
     SAMPLESHEET="$AUTO_SAMPLESHEET"
   fi
 
   step "Sanger 2/2: Prepare batch FASTA from samplesheet"
-  Rscript scripts/prepare_input_fasta.R "$FASTA_DIR" "$SAMPLESHEET" "$BATCH_FA"
+  Rscript "$HAV_SEQ_REPO/prepare_input_fasta.R" "$FASTA_DIR" "$SAMPLESHEET" "$BATCH_FA"
   if [[ ! -f "$BATCH_FA" ]]; then
     echo "ERROR: prepare_input_fasta.R completed but $BATCH_FA was not created." >&2
     exit 1
   fi
 
 fi
-
+conda deactivate
 
 # ════════════════════════════════════════════════════════════════════════════
 # COMMON STEPS — BLAST + NextClade → trees → report
@@ -387,15 +391,15 @@ echo "  DATASET_DIR   = $DATASET_DIR"
 echo "  OUT_BASE      = $OUT_BASE"
 echo "  YEAR          = $YEAR"
 echo "  OPTIONAL_ARGS = ${OPTIONAL_ARGS[@]}"
-bash scripts/run_all_analyses.sh "$BATCH_DIR" "$DATASET_DATE" "$BATCH_FA" "$DATASET_DIR" "$OUT_BASE" "$YEAR" "${OPTIONAL_ARGS[@]}"
 
+bash scripts/run_all_analyses.sh "$BATCH_DIR" "$DATASET_DATE" "$BATCH_FA" "$DATASET_DIR" "$OUT_BASE" "$YEAR" "${OPTIONAL_ARGS[@]}"
 
 # ════════════════════════════════════════════════════════════════════════════
 # ADD FASTA TO DATABASE
 # ════════════════════════════════════════════════════════════════════════════
 
 step "Add FASTA to database"
-#bash scripts/add_fasta_to_db.sh "$BATCH_FA" "$OUT_BASE" || exit 1
+#bash "$HAV_SEQ_REPO/add_fasta_to_db.sh" "$BATCH_FA" "$OUT_BASE" || exit 1
 if [[ -f "$BATCH_FA" ]]; then
-  bash scripts/add_fasta_to_db.sh "$BATCH_FA" "$OUT_BASE" || exit 1
+  bash "$HAV_SEQ_REPO/add_fasta_to_db.sh" "$BATCH_FA" "$OUT_BASE" || exit 1
 fi

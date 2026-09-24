@@ -35,9 +35,8 @@ if [[ ! -f "$INPUT_FA" ]]; then
 fi
 
 if ! command -v makeblastdb &> /dev/null; then
-    echo "ERROR: makeblastdb not found. Activate the HAVDEV conda environment:" >&2
-    echo "  conda activate /path/to/hav_dev/.conda/HAVDEV" >&2
-    exit 1
+    echo "ERROR: makeblastdb not found. Activate the BLAST conda environment:" >&2
+        exit 1
 fi
 
 # ── Build database ────────────────────────────────────────────────────────────
@@ -131,6 +130,7 @@ makeblastdb \
     -title   "$DATASET_DATE"
 
 mv "$DEDUP_FA" "$DB_PATH/blast_db"
+
 
 echo ""
 echo "── Done ──────────────────────────────────────────────────────────────────"
