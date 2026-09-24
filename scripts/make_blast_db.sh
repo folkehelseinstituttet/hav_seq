@@ -26,11 +26,9 @@ INPUT_FA="$1"
 DB_DIR="$BASE_REL"
 DB_PATH="$DB_DIR/$DATASET_DATE"
 
-cd "$BASE_REL"
-
 # ── Checks ────────────────────────────────────────────────────────────────────
 if [[ ! -f "$INPUT_FA" ]]; then
-    echo "ERROR: input FASTA not found: $BASE_REL/$INPUT_FA" >&2
+    echo "ERROR: input FASTA not found: $INPUT_FA" >&2
     exit 1
 fi
 
