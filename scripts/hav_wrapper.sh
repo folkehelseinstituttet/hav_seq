@@ -296,7 +296,7 @@ echo "════════════════════════�
 # ════════════════════════════════════════════════════════════════════════════
 
 step "Build BLAST database"
-conda run -n BLAST bash "$HAV_SEQ_REPO/build_blast_db.sh" "$TMP_DIR/2PA.fa" "$TMP_DIR/local_datasets" || exit 1
+conda run -n BLAST bash "$HAV_SEQ_REPO/scripts/build_blast_db.sh" "$TMP_DIR/2PA.fa" "$TMP_DIR/local_datasets" || exit 1
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -304,7 +304,7 @@ conda run -n BLAST bash "$HAV_SEQ_REPO/build_blast_db.sh" "$TMP_DIR/2PA.fa" "$TM
 # ════════════════════════════════════════════════════════════════════════════
 
 step "Preparing metadata"
-conda run -n R_shared Rscript "$HAV_SEQ_REPO/prepare_metadata.R" "$TMP_DIR/Requests.xlsx" "$TMP_DIR/HAV_lw_uttrekk.tsv" "$TMP_DIR/metadata.tsv" || exit 1
+conda run -n R_shared Rscript "$HAV_SEQ_REPO/scripts/prepare_metadata.R" "$TMP_DIR/Requests.xlsx" "$TMP_DIR/HAV_lw_uttrekk.tsv" "$TMP_DIR/metadata.tsv" || exit 1
 
 METADATA="$TMP_DIR/metadata.tsv"
 
@@ -316,7 +316,7 @@ if [[ "$MODE" == "wgs" ]]; then
 
   if [[ "$SKIP_ASSEMBLY" -eq 0 ]]; then
     step "WGS 1/2: Nanopore QC + filtering + ViroConstrictor assembly"
-    bash "$HAV_SEQ_REPO/run_pipeline.sh" "$SAMPLESHEET" "$BATCH_ABS" "$THREADS"
+    bash "$HAV_SEQ_REPO/scripts/run_pipeline.sh" "$SAMPLESHEET" "$BATCH_ABS" "$THREADS"
     echo "  Samplesheet : $SAMPLESHEET"
   else
     echo ""
@@ -352,12 +352,12 @@ if [[ "$MODE" == "sanger" ]]; then
   if [[ -z "$SAMPLESHEET" ]] || [[ ! -f "$SAMPLESHEET" ]]; then
     step "Sanger 1/2: Generate samplesheet from FASTA directory"
     AUTO_SAMPLESHEET="$BATCH_DIR/auto_samplesheet.tsv"
-    conda run -n R_shared Rscript "$HAV_SEQ_REPO/generate_samplesheet.R" "$FASTA_DIR" "$AUTO_SAMPLESHEET" || exit 1
+    conda run -n R_shared Rscript "$HAV_SEQ_REPO/scripts/generate_samplesheet.R" "$FASTA_DIR" "$AUTO_SAMPLESHEET" || exit 1
     SAMPLESHEET="$AUTO_SAMPLESHEET"
   fi
 
   step "Sanger 2/2: Prepare batch FASTA from samplesheet"
-  conda run -n R_shared Rscript "$HAV_SEQ_REPO/prepare_input_fasta.R" "$FASTA_DIR" "$SAMPLESHEET" "$BATCH_FA"
+  conda run -n R_shared Rscript "$HAV_SEQ_REPO/scripts/prepare_input_fasta.R" "$FASTA_DIR" "$SAMPLESHEET" "$BATCH_FA"
   if [[ ! -f "$BATCH_FA" ]]; then
     echo "ERROR: prepare_input_fasta.R completed but $BATCH_FA was not created." >&2
     exit 1
@@ -391,7 +391,7 @@ echo "  OUT_BASE      = $OUT_BASE"
 echo "  YEAR          = $YEAR"
 echo "  OPTIONAL_ARGS = ${OPTIONAL_ARGS[@]}"
 
-bash scripts/run_all_analyses.sh "$BATCH_DIR" "$DATASET_DATE" "$BATCH_FA" "$DATASET_DIR" "$OUT_BASE" "$YEAR" "${OPTIONAL_ARGS[@]}"
+bash "$HAV_SEQ_REPO/scripts/run_all_analyses.sh" "$BATCH_DIR" "$DATASET_DATE" "$BATCH_FA" "$DATASET_DIR" "$OUT_BASE" "$YEAR" "${OPTIONAL_ARGS[@]}"
 
 # ════════════════════════════════════════════════════════════════════════════
 # ADD FASTA TO DATABASE
@@ -400,5 +400,5 @@ bash scripts/run_all_analyses.sh "$BATCH_DIR" "$DATASET_DATE" "$BATCH_FA" "$DATA
 step "Add FASTA to database"
 #bash "$HAV_SEQ_REPO/add_fasta_to_db.sh" "$BATCH_FA" "$OUT_BASE" || exit 1
 if [[ -f "$BATCH_FA" ]]; then
-  bash "$HAV_SEQ_REPO/add_fasta_to_db.sh" "$BATCH_FA" "$OUT_BASE" || exit 1
+  bash "$HAV_SEQ_REPO/scripts/add_fasta_to_db.sh" "$BATCH_FA" "$OUT_BASE" || exit 1
 fi
