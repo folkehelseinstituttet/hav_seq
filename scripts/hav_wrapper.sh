@@ -324,6 +324,8 @@ conda run -n NEXTCLADE nextclade dataset get \
   --name="community/masphl-bioinformatics/hav/whole-genome" \
   --output-dir="/mnt/tempdata/hav_input/nextclade_hav_whole_genome"
 
+export LINEAGES_DATASET="$TMP_DIR/nextclade_hav_whole_genome"
+
   if [[ "$SKIP_ASSEMBLY" -eq 0 ]]; then
     step "WGS 1/2: Nanopore QC + filtering + ViroConstrictor assembly"
     bash "$HAV_SEQ_REPO/scripts/run_pipeline.sh" "$SAMPLESHEET" "$BATCH_ABS" "$THREADS"
@@ -361,6 +363,8 @@ if [[ "$MODE" == "sanger" ]]; then
 conda run -n NEXTCLADE nextclade dataset get \
   --name="community/masphl-bioinformatics/hav/vp1-2b-junction" \
   --output-dir="/mnt/tempdata/hav_input/nextclade_hav_vp1_2b"
+
+export LINEAGES_DATASET="$TMP_DIR/nextclade_hav_vp1_2b"
 
   # Auto-generate samplesheet from FASTA filenames if not provided
   if [[ -z "$SAMPLESHEET" ]] || [[ ! -f "$SAMPLESHEET" ]]; then

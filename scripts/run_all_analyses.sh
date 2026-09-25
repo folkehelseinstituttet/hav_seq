@@ -143,10 +143,8 @@ if [[ "$IS_SANGER" -eq 1 && -z "$PRIMER_NAMES" ]]; then
 fi
 
 PROJECT_DIR="$(pwd)"
-LINEAGES_DATASET="$PROJECT_DIR/data/nextclade_datasets/hav-vp1-2b-lineages"
 HREADS=4
 
-cd "$PROJECT_DIR"
 
 # ── Validation ────────────────────────────────────────────────────────────────
 if [[ ! -f "$BATCH_FA" ]]; then
@@ -234,7 +232,7 @@ echo ""
 # ── Analysis 2: NextClade (lineages dataset) ──────────────────────────────────
 echo "▶ Step 2/6: NextClade — lineages dataset (clade + lineage_phylo)"
 echo "─────────────────────────────────────────────────────────────────"
-
+echo "  Lineages dataset → $LINEAGES_DATASET"
 LINEAGES_OUT="$OUT_BASE/lineages"
 mkdir -p "$LINEAGES_OUT"
 
