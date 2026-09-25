@@ -384,7 +384,7 @@ fi
 # Pass arguments directly to preserve spaces in paths
 echo "Running all analyses with the following parameters:"
 echo "  BATCH_DIR     = $BATCH_DIR"
-echo "  DATASET_DATE  = $DATASET_DATE"
+#echo "  DATASET_DATE  = $DATASET_DATE"
 echo "  BATCH_FA      = $BATCH_FA"
 echo "  DATASET_DIR   = $DATASET_DIR"
 echo "  OUT_BASE      = $OUT_BASE"
