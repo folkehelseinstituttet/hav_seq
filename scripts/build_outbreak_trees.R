@@ -26,6 +26,11 @@ output_dir <- args[1]
 dataset_date <- args[2]
 dataset_dir <- args[3]
 
+dataset_version_dir <- file.path(dataset_dir, dataset_date)
+blast_db_dir <- file.path(dataset_version_dir, "blast_db")
+dataset_root <- dirname(dataset_dir)
+dataset_meta <- file.path(dataset_root, "metadata.tsv")
+
 # Setup logging
 log_file <- file.path(output_dir, ".outbreak_trees.log")
 log_msg <- function(...) {
@@ -38,6 +43,10 @@ log_msg("=== Starting outbreak tree generation ===")
 log_msg("Output dir: %s", output_dir)
 log_msg("Dataset date: %s", dataset_date)
 log_msg("Dataset dir: %s", dataset_dir)
+log_msg("Dataset version dir: %s", dataset_version_dir)
+log_msg("BLAST DB dir: %s", blast_db_dir)
+log_msg("Dataset root: %s", dataset_root)
+log_msg("Dataset metadata: %s", dataset_meta)
 
 # === LOAD PACKAGES ===========================================================
 
@@ -63,7 +72,6 @@ log_msg("✓ Output directory exists")
 # Setup paths
 trees_dir <- file.path(output_dir, "trees")
 lineages_file <- file.path(output_dir, "lineages", "nextclade.tsv")
-dataset_meta <- file.path(dataset_dir, "metadata.tsv")
 outbreak_trees_dir <- file.path(output_dir, "outbreak_trees")
 
 if (!dir.exists(trees_dir)) {
@@ -252,12 +260,20 @@ log_msg("\n--- Generating phylogenetic trees ---")
 
 # Locate and read the database FASTA once (shared across all variants)
 db_fasta_candidates <- c(
+  file.path(blast_db_dir, "input_dedup.fa"),
+  file.path(dataset_version_dir, "input_dedup.fa"),
   file.path(dataset_dir, "input_dedup.fa"),
   file.path(dataset_dir, "input.fa"),
   file.path(dataset_dir, "reference.fasta"),
-  file.path(dataset_dir, "..", "References", "IA_IB_IIA_IIB_IIIA_IIIB_references.fa")
+  file.path(
+    dataset_dir,
+    "..",
+    "References",
+    "IA_IB_IIA_IIB_IIIA_IIIB_references.fa"
+  )
 )
 
+db_seqs_raw <- NULL
 db_fasta_file <- NULL
 for (candidate in db_fasta_candidates) {
   if (file.exists(candidate)) {
@@ -267,7 +283,6 @@ for (candidate in db_fasta_candidates) {
   }
 }
 
-db_seqs_raw <- NULL
 if (!is.null(db_fasta_file)) {
   db_seqs_raw <- tryCatch(read_fasta_raw(db_fasta_file), error = function(e) {
     log_msg("✗ Error reading database FASTA: %s", conditionMessage(e))

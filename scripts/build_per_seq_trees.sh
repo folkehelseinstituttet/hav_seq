@@ -39,8 +39,8 @@
 
 set -euo pipefail
 
-BATCH_DIR="${1:?Usage: bash scripts/build_per_seq_trees.sh <batch_dir> [dataset_date] [n_neighbors] [output_base]}"
-DATASET_DATE="${2:-2026-04-10}"
+BATCH_DIR="${1:?Usage: bash scripts/build_per_seq_trees.sh <batch_dir> <dataset_date> <n_neighbors> <out_base> <dataset_dir> <batch_fa>}"
+DATASET_DATE="${2:?dataset_date is required}"
 N_NEIGHBORS="${3:-30}"
 OUT_BASE="${4:?out_base is required}"
 DATASET_DIR="${5:?dataset_dir is required}"
@@ -48,8 +48,8 @@ BATCH_FA="${6:?batch_fasta is required}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEDUP_FA="$DATASET_DIR/blast_db/input_dedup.fa"
-BLAST_DB="$DATASET_DIR/blast_db/hav"
+DEDUP_FA="$DATASET_DIR/$DATASET_DATE/blast_db/input_dedup.fa"
+BLAST_DB="$DATASET_DIR/$DATASET_DATE/blast_db/hav"
 METADATA_TSV="$DATASET_DIR/metadata.tsv"
 
 BATCH_NAME=$(basename "$BATCH_DIR")
