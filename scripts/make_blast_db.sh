@@ -10,11 +10,11 @@
 #   bash scripts/make_blast_db.sh [dataset_date]
 #
 # Output:
-#   data/local_datasets/<date>/blast_db/hav.{nhr,nin,nsq,...}
+#   data/local_dataset/<date>/blast_db/hav.{nhr,nin,nsq,...}
 #
 # To retrieve a sequence by ID after running BLAST, use the deduplicated FASTA:
-#   grep -A2 '^><id>' data/local_datasets/<date>/blast_db/input_dedup.fa
-#   seqkit grep -p <id> data/local_datasets/<date>/blast_db/input_dedup.fa
+#   grep -A2 '^><id>' data/local_dataset/<date>/blast_db/input_dedup.fa
+#   seqkit grep -p <id> data/local_dataset/<date>/blast_db/input_dedup.fa
 
 set -euo pipefail
 
@@ -46,6 +46,7 @@ mkdir -p "$DB_PATH"
 #   - non-ASCII or control characters in headers
 #   - empty sequences
 # This step deduplicates and sanitizes headers before building the database.
+
 DEDUP_FA="$DB_PATH/input_dedup.fa"
 python3 - "$INPUT_FA" "$DEDUP_FA" << 'PYEOF'
 import sys, re
@@ -112,19 +113,17 @@ PYEOF
 echo "── Building BLAST database ───────────────────────────────────────────────"
 echo "  Input : $INPUT_FA"
 echo "  Output: $DB_PATH"
-echo ""
-
-BLAST_DIR=/tmp/blastdb
-
-ln -sfn "$DB_PATH" "$BLAST_DIR" #link til sti pga mellomrom i filbane
-ln -sfn "$DEDUP_FA" "$BLAST_DIR/input_dedup.fa" #link til sti pga mellomrom i filbane
+echo "  BASE_REL: $BASE_REL"
+echo "  DB_PATH: $DB_PATH"
+echo "  INPUT_FA: $INPUT_FA"
+echo "  DB_DIR: $DB_DIR"
 
 mkdir -p "$DB_PATH/blast_db"
 
-makeblastdb \
-    -in      "$BLAST_DIR/input_dedup.fa" \
+conda run -n BLAST makeblastdb \
+    -in      "$DEDUP_FA" \
     -dbtype  nucl \
-    -out     "$BLAST_DIR/blast_db/hav" \
+    -out     "$DB_PATH/blast_db/hav" \
     -title   "$DATASET_DATE"
 
 mv "$DEDUP_FA" "$DB_PATH/blast_db"
