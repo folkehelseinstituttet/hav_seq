@@ -272,6 +272,8 @@ step() {
   echo "─────────────────────────────────────────────────────────────────"
 }
 
+export DATASET_DATE=$(find "$TMP_DIR/local_dataset" -maxdepth 1 -type d -name "????-??-??" | xargs basename)
+
 echo "════════════════════════════════════════════════════════════════"
 echo "HAV Analysis Pipeline"
 echo "  Batch     : $BATCH_NAME"
@@ -280,7 +282,7 @@ echo "  Batch Dir       : $BATCH_DIR"
 echo "  Batch fasta dir : $FASTA_DIR"
 #echo "  Samplesheet     : $SAMPLESHEET"
 echo "  Mode      : $MODE"
-#echo "  Dataset   : $DATASET_DATE"
+echo "  Dataset   : $DATASET_DATE"
 echo "  Threads   : $THREADS"
 echo "  Neighbors : $N_NEIGHBORS"
 echo "  Started   : $(date)"
@@ -381,7 +383,10 @@ if [[ "$MODE" == "sanger" && -n "$PRIMER_NAMES" ]]; then
   [[ -n "$PRIMERS_FILE" ]] && OPTIONAL_ARGS+=(--primers-file "$PRIMERS_FILE")
 fi
 
+
+
 # Pass arguments directly to preserve spaces in paths
+step "Running all analyses"
 echo "Running all analyses with the following parameters:"
 echo "  BATCH_DIR     = $BATCH_DIR"
 #echo "  DATASET_DATE  = $DATASET_DATE"

@@ -19,7 +19,7 @@
 set -euo pipefail
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-export DATASET_DATE=$(date +%Y-%m-%d)
+DATASET_DATE=$(date +%Y-%m-%d)
 SCRIPT_DIR="$HAV_SEQ_REPO"
 BASE_REL="$2"
 INPUT_FA="$1"
