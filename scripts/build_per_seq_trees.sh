@@ -404,11 +404,11 @@ for QUERY in "${QUERY_IDS[@]}"; do
 
   # Extract neighbor sequences from local reference FASTA
   NEIGHBORS_FA="$SEQ_DIR/reference_seqs.fa"
-  seqkit grep -f "$SEQ_DIR/neighbors.txt" "$DEDUP_FA" > "$NEIGHBORS_FA"
+  conda run -n SEQKIT seqkit grep -f "$SEQ_DIR/neighbors.txt" "$DEDUP_FA" > "$NEIGHBORS_FA"
 
   # Also extract any community accessions from the downloaded community FASTA
   if [[ -f "$COMMUNITY_SEQS_FA" ]]; then
-    seqkit grep -f "$SEQ_DIR/neighbors.txt" "$COMMUNITY_SEQS_FA" >> "$NEIGHBORS_FA"
+      conda run -n SEQKIT seqkit grep -f "$SEQ_DIR/neighbors.txt" "$COMMUNITY_SEQS_FA" >> "$NEIGHBORS_FA"
   fi
 
   # Belt-and-braces: drop any neighbor whose header exactly matches the query
