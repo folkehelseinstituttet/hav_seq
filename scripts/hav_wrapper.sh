@@ -196,7 +196,7 @@ fi
 FASTA_DIR="$TMP_DIR/Fasta"
 BATCH_FA="$FASTA_DIR/$BATCH_NAME.fasta"
 OUT_BASE="$HOME/$BATCH_NAME"
-DATASET_DIR="$TMP_DIR/local_datasets"
+DATASET_DIR="$TMP_DIR/local_dataset"
 
 
 # ── Validation ────────────────────────────────────────────────────────────────
@@ -296,7 +296,7 @@ echo "════════════════════════�
 # ════════════════════════════════════════════════════════════════════════════
 
 step "Build BLAST database"
-conda run -n BLAST bash "$HAV_SEQ_REPO/scripts/make_blast_db.sh" "$TMP_DIR/local_datasets/2PA.fa" "$TMP_DIR/local_datasets" || exit 1
+conda run -n BLAST bash "$HAV_SEQ_REPO/scripts/make_blast_db.sh" "$TMP_DIR/local_dataset/2PA.fa" "$TMP_DIR/local_dataset" || exit 1
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -13,7 +13,7 @@ params:
   batch_dir:    "data/Batch-1"
   batch_fa:     "data/Batch-1/Batch-1.fa"
   dataset_date: "2026-04-10"
-  dataset_dir:  "data/local_datasets/2026-04-10"
+  dataset_dir:  "data/local_dataset/2026-04-10"
   out_base:     "data/Batch-1/output"
   n_neighbors:  30
   mode:         "sanger"
@@ -53,7 +53,7 @@ batch_dir    <- file.path(params$batch_dir)
 #out_dir      <- file.path(batch_dir, "output")
 out_dir      <- file.path(params$out_base)
 trees_dir    <- file.path(out_dir, "trees")
-#dataset_base <- file.path(proj_dir, "data", "local_datasets", params$dataset_date)
+#dataset_base <- file.path(proj_dir, "data", "local_dataset", params$dataset_date)
 dataset_base <- file.path(params$dataset_dir)
 metadata_tsv <- file.path(dataset_base, "metadata.tsv")
 batch_name   <- basename(params$batch_dir)

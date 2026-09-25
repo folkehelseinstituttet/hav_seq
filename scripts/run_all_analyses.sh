@@ -62,7 +62,7 @@ Required arguments:
   <batch_dir>      Batch directory path
   <dataset_date>   Dataset date (e.g., 2026-04-10)
   <batch_fa>       Path to batch FASTA file
-  <dataset_dir>    Path to local_datasets/<date>
+  <dataset_dir>    Path to local_dataset/<date>
   <out_base>       Output base directory
   <year>           Year folder
 
