@@ -65,8 +65,6 @@ fi
 mkdir -p "$OUT_BASE"
 OUT_TSV="$OUT_BASE/blast_results.tsv"
 
-cd "$PROJECT_DIR"
-
 # ── Checks ────────────────────────────────────────────────────────────────────
 if [[ ! -f "$BATCH_FA" ]]; then
     echo "ERROR: batch FASTA not found: $PROJECT_DIR/$BATCH_FA" >&2
