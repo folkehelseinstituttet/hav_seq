@@ -45,13 +45,13 @@ set -euo pipefail
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 BATCH_FA="${1:?Usage: bash scripts/blast_batch.sh <batch_fasta> <dataset_date> <dataset_dir> <out_base>}"
-DATASET_DATE="${2:-2026-04-10}"
+DATASET_DATE="${2:?dataset_date is required}"
 DATASET_DIR="${3:?dataset_dir is required}"
 OUT_BASE="${4:?out_base is required}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DB_PATH="$DATASET_DIR/blast_db/hav"
+DB_PATH="$DATASET_DIR/$DATASET_DATE/blast_db/hav"
 THREADS=4
 EVALUE="1e-5"
 
@@ -107,7 +107,7 @@ mkdir -p "$HOME/blast_tmp_db"
 
 # Lag en symbolsk lenke direkte til hav-filene i den ønskede datasettversjonen
 # (unngår mellomrom i "/mnt/n/.../HAV genteknologi/..." som blastn kan streve med)
-ln -sf "$DATASET_DIR/blast_db"/hav.* "$HOME/blast_tmp_db/"
+ln -sf "$DATASET_DIR/$DATASET_DATE/blast_db"/hav.* "$HOME/blast_tmp_db/"
 
 # Sett den nye stien som DB_PATH (uten mellomrom)
 DB_PATH="$HOME/blast_tmp_db/hav"
@@ -147,7 +147,7 @@ echo "  Hits     : $N_HITS (e-value <= $EVALUE)"
 echo "  Output   : $PROJECT_DIR/$OUT_TSV"
 echo ""
 echo "  To retrieve a hit sequence (from deduplicated FASTA):"
-echo "    grep -A2 '^><sseqid>' data/local_datasets/$DATASET_DATE/blast_db/input_dedup.fa"
+echo "    grep -A2 '^><sseqid>' $DATASET_DIR/$DATASET_DATE/blast_db/input_dedup.fa"
   echo ""
   echo "  To join with metadata:"
   echo "    data/local_datasets/$DATASET_DATE/metadata_corrected.tsv  (join on sseqid == id)"

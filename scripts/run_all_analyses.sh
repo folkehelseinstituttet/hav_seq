@@ -144,9 +144,7 @@ fi
 
 PROJECT_DIR="$(pwd)"
 LINEAGES_DATASET="$PROJECT_DIR/data/nextclade_datasets/hav-vp1-2b-lineages"
-
-BATCH_NAME=$(basename "$BATCH_DIR")
-THREADS=4
+HREADS=4
 
 cd "$PROJECT_DIR"
 
