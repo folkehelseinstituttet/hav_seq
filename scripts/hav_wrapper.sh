@@ -308,11 +308,21 @@ conda run -n R_shared Rscript "$HAV_SEQ_REPO/scripts/prepare_metadata.R" "$TMP_D
 
 METADATA="$TMP_DIR/metadata.tsv"
 
+
+
+
+
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # WGS BRANCH
 # ════════════════════════════════════════════════════════════════════════════
 #conda activate viroconstrictor
 if [[ "$MODE" == "wgs" ]]; then
+
+conda run -n NEXTCLADE nextclade dataset get \
+  --name="community/masphl-bioinformatics/hav/whole-genome" \
+  --output-dir="/mnt/tempdata/hav_input/nextclade_hav_whole_genome"
 
   if [[ "$SKIP_ASSEMBLY" -eq 0 ]]; then
     step "WGS 1/2: Nanopore QC + filtering + ViroConstrictor assembly"
@@ -347,6 +357,10 @@ fi
 # SANGER BRANCH
 # ════════════════════════════════════════════════════════════════════════════
 if [[ "$MODE" == "sanger" ]]; then
+
+conda run -n NEXTCLADE nextclade dataset get \
+  --name="community/masphl-bioinformatics/hav/vp1-2b-junction" \
+  --output-dir="/mnt/tempdata/hav_input/nextclade_hav_vp1_2b"
 
   # Auto-generate samplesheet from FASTA filenames if not provided
   if [[ -z "$SAMPLESHEET" ]] || [[ ! -f "$SAMPLESHEET" ]]; then
