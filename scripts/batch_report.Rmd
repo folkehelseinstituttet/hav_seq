@@ -322,14 +322,19 @@ if (nrow(nc_lineages) > 0) {
 all_queries <- nc_lineages$seqName
 
 # Metadata for joining reference info to BLAST hits
-meta_base <- meta %>%
-  transmute(
-    sseqid = id,
-    hit_genotype = if ("genotype" %in% names(meta)) as.character(genotype) else NA_character_,
-    hit_variant = if (!is.na(meta_lineage_col)) as.character(.data[[meta_lineage_col]]) else NA_character_
-  )
-
-meta_base
+meta_base <- if (nrow(meta) > 0) {
+  meta %>%
+    transmute(
+      sseqid = id,
+      hit_genotype = if ("genotype" %in% names(meta))
+        as.character(genotype)
+      else
+        NA_character_,
+      hit_variant = if (!is.na(meta_lineage_col))
+        as.character(.data[[meta_lineage_col]])
+      else
+        NA_character_
+    )
 } else {
   tibble(sseqid = character())
 }
@@ -338,7 +343,7 @@ meta_base
 # Only proceed with join if blast_raw has data and the required column exists
 blast_top <- if (nrow(blast_raw) > 0 && "sseqid" %in% names(blast_raw)) {
   blast_raw %>%
-    left_join(meta_for_join, by = "sseqid") %>%
+    left_join(meta_base, by = "sseqid") %>%
     # Define "nearest BLAST hit" as lowest SNP mismatch first, then highest bitscore.
     arrange(qseqid, mismatch, desc(bitscore)) %>%
     group_by(qseqid) %>%
@@ -1999,8 +2004,10 @@ meta_tbl <- tip_info %>%
     
     cat("\n\n")
   } # end SNP heatmap display
+} # end for each query
+} # end tree/alignment availability check
 
-
+```
 ---
 
 # 5. Variant naming
@@ -2445,48 +2452,7 @@ batch_variants <- blast_data %>%
   mutate(
     base_variant = extract_base_variant(variant)
   )
-  # Normalize IDs for matching with metadata
-  batch_variants <- blast_data %>%
-  arrange(
-    qseqid,
-    mismatch,
-    desc(bitscore)
-  ) %>%
-  group_by(qseqid) %>%
-  slice_head(n = 1) %>%
-  ungroup() %>%
-  select(
-    qseqid,
-    sseqid
-  ) %>%
-  mutate(
-    sseqid_norm = norm_id(sseqid)
-  ) %>%
-  left_join(
-    meta %>%
-      filter(
-        !is.na(variant),
-        variant != ""
-      ) %>%
-      mutate(
-        id_norm = norm_id(id)
-      ) %>%
-      select(
-        id_norm,
-        variant
-      ),
-    by = c("sseqid_norm" = "id_norm")
-  ) %>%
-  select(
-    seqName = qseqid,
-    variant
-  ) %>%
-  filter(
-    !is.na(variant)
-  ) %>%
-  mutate(
-    base_variant = extract_base_variant(variant)
-  )
+
 
 # Group by base variant
 batch_variant_summary <- batch_variants %>%
