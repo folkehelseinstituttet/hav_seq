@@ -272,8 +272,6 @@ step() {
   echo "─────────────────────────────────────────────────────────────────"
 }
 
-export DATASET_DATE=$(find "$TMP_DIR/local_dataset" -maxdepth 1 -type d -name "????-??-??" | xargs basename)
-
 echo "════════════════════════════════════════════════════════════════"
 echo "HAV Analysis Pipeline"
 echo "  Batch     : $BATCH_NAME"
@@ -282,7 +280,7 @@ echo "  Batch Dir       : $BATCH_DIR"
 echo "  Batch fasta dir : $FASTA_DIR"
 #echo "  Samplesheet     : $SAMPLESHEET"
 echo "  Mode      : $MODE"
-echo "  Dataset   : $DATASET_DATE"
+#echo "  Dataset   : $DATASET_DATE"
 echo "  Threads   : $THREADS"
 echo "  Neighbors : $N_NEIGHBORS"
 echo "  Started   : $(date)"
@@ -371,6 +369,8 @@ fi
 # ════════════════════════════════════════════════════════════════════════════
 # COMMON STEPS — BLAST + NextClade → trees → report
 # ════════════════════════════════════════════════════════════════════════════
+step "Running all analyses"
+
 if [[ ! -f "$BATCH_FA" ]]; then
   echo "ERROR: Batch FASTA not found: $BATCH_FA" >&2
   exit 1
@@ -383,19 +383,18 @@ if [[ "$MODE" == "sanger" && -n "$PRIMER_NAMES" ]]; then
   [[ -n "$PRIMERS_FILE" ]] && OPTIONAL_ARGS+=(--primers-file "$PRIMERS_FILE")
 fi
 
+export DATASET_DATE=$(find "$TMP_DIR/local_dataset" -maxdepth 1 -type d -name "????-??-??" | xargs basename)
 
-
-# Pass arguments directly to preserve spaces in paths
-step "Running all analyses"
 echo "Running all analyses with the following parameters:"
 echo "  BATCH_DIR     = $BATCH_DIR"
-#echo "  DATASET_DATE  = $DATASET_DATE"
+echo "  DATASET_DATE  = $DATASET_DATE"
 echo "  BATCH_FA      = $BATCH_FA"
 echo "  DATASET_DIR   = $DATASET_DIR"
 echo "  OUT_BASE      = $OUT_BASE"
 echo "  YEAR          = $YEAR"
 echo "  OPTIONAL_ARGS = ${OPTIONAL_ARGS[@]}"
 
+# Pass arguments directly to preserve spaces in paths
 bash "$HAV_SEQ_REPO/scripts/run_all_analyses.sh" "$BATCH_DIR" "$DATASET_DATE" "$BATCH_FA" "$DATASET_DIR" "$OUT_BASE" "$YEAR" "${OPTIONAL_ARGS[@]}"
 
 # ════════════════════════════════════════════════════════════════════════════
