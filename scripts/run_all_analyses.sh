@@ -143,7 +143,7 @@ if [[ "$IS_SANGER" -eq 1 && -z "$PRIMER_NAMES" ]]; then
 fi
 
 PROJECT_DIR="$(pwd)"
-HREADS=4
+THREADS=4
 
 
 # ── Validation ────────────────────────────────────────────────────────────────
