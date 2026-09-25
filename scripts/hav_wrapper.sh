@@ -420,7 +420,22 @@ bash "$HAV_SEQ_REPO/scripts/run_all_analyses.sh" "$BATCH_DIR" "$DATASET_DATE" "$
 # ════════════════════════════════════════════════════════════════════════════
 
 step "Add FASTA to database"
-#bash "$HAV_SEQ_REPO/add_fasta_to_db.sh" "$BATCH_FA" "$OUT_BASE" || exit 1
-if [[ -f "$BATCH_FA" ]]; then
-  bash "$HAV_SEQ_REPO/scripts/add_fasta_to_db.sh" "$BATCH_FA" "$OUT_BASE" || exit 1
-fi
+
+# Opprett mappe for ny database
+HAV_DB_DIR="$HOME/hav_database"
+mkdir -p "$HAV_DB_DIR"
+
+# Dagens dato
+TODAY=$(date +%F)
+
+# Flytt gammel database til arkivnavn
+cp "$DATASET_DIR/2PA.fa" "$HAV_DB_DIR/2PA_pre_${TODAY}.fa"
+
+# Kopier gammel database tilbake som utgangspunkt for ny
+cp "$HAV_DB_DIR/2PA_pre_${TODAY}.fa" "$HAV_DB_DIR/2PA.fa"
+
+# Legg til nye sekvenser
+# BATCH_FA inneholder multifasta med alle prøvene i batchen
+cat "$BATCH_FA" >> "$HAV_DB_DIR/2PA.fa"
+echo "  New sequences added to $HAV_DB_DIR/2PA.fa"
+
