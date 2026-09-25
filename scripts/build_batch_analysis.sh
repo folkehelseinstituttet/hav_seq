@@ -242,7 +242,7 @@ echo ""
 echo "Step 4: Computing SNP distance matrix..."
 
 # Use R to compute pairwise SNP distances
-Rscript - "$BATCH_ALIGN_ALIGNED" "$BATCH_SNP" << 'EOF'
+conda run -n R_shared Rscript - "$BATCH_ALIGN_ALIGNED" "$BATCH_SNP" << 'EOF'
 args <- commandArgs(trailingOnly = TRUE)
 align_file <- args[1]
 output_dir <- args[2]
