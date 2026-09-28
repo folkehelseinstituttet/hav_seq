@@ -55,7 +55,8 @@ out_dir      <- file.path(params$out_base)
 trees_dir    <- file.path(out_dir, "trees")
 #dataset_base <- file.path(proj_dir, "data", "local_dataset", params$dataset_date)
 dataset_base <- file.path(params$dataset_dir)
-metadata_tsv <- file.path(dataset_base, "metadata.tsv")
+dataset_root <- dirname(dataset_base)
+metadata_tsv <- file.path(dataset_root, "metadata.tsv")
 batch_name   <- basename(params$batch_dir)
 input_fasta  <- file.path(params$batch_fa)
 
@@ -325,20 +326,17 @@ all_queries <- nc_lineages$seqName
 meta_base <- if (nrow(meta) > 0) {
   meta %>%
     transmute(
-      sseqid = id,
-      hit_genotype = if ("genotype" %in% names(meta))
-        as.character(genotype)
-      else
-        NA_character_,
-      hit_variant = if (!is.na(meta_lineage_col))
-        as.character(.data[[meta_lineage_col]])
-      else
-        NA_character_
+      sseqid = as.character(id),
+      hit_genotype = as.character(genotype),
+      hit_variant = as.character(variant)
     )
 } else {
-  tibble(sseqid = character())
+  tibble(
+    sseqid = character(),
+    hit_genotype = character(),
+    hit_variant = character()
+  )
 }
-
 
 # Only proceed with join if blast_raw has data and the required column exists
 blast_top <- if (nrow(blast_raw) > 0 && "sseqid" %in% names(blast_raw)) {
@@ -354,14 +352,31 @@ blast_top <- if (nrow(blast_raw) > 0 && "sseqid" %in% names(blast_raw)) {
   blast_raw %>% mutate(hit_rank = NA_integer_)
 }
 
-blast_best <- blast_top %>%
-  filter(hit_rank == 1) %>%
-  select(qseqid, sseqid,
-         blast_pident    = pident,
-         blast_mismatch  = mismatch,
-         blast_qcovs     = qcovs,
-         blast_bitscore  = bitscore,
-         any_of(c("hit_variant", "hit_genotype")))
+blast_best <- if (nrow(blast_top) > 0) {
+  blast_top %>%
+    filter(hit_rank == 1) %>%
+    select(
+      qseqid,
+      sseqid,
+      blast_pident = pident,
+      blast_mismatch = mismatch,
+      blast_qcovs = qcovs,
+      blast_bitscore = bitscore,
+      any_of(c("hit_variant", "hit_genotype"))
+    )
+} else {
+  tibble(
+    qseqid = character(),
+    sseqid = character(),
+    blast_pident = numeric(),
+    blast_mismatch = numeric(),
+    blast_qcovs = numeric(),
+    blast_bitscore = numeric(),
+    hit_variant = character(),
+    hit_genotype = character()
+  )
+}
+
 
 # Ensure hit_variant and hit_genotype columns exist
 if (!"hit_variant" %in% names(blast_best)) blast_best$hit_variant <- NA_character_
@@ -933,7 +948,12 @@ summary_tbl <- summary_tbl %>%
   )
 
 # ── Read samplesheet for LabWareID and SequenceID ─────────────────────────────
-.ss_sample_info <- tibble()
+.ss_sample_info <- tibble(
+  Sample = character(),
+  LabWareID = character(),
+  SekvensID = character()
+)
+
 .ss_path <- file.path(batch_dir, "auto_samplesheet.tsv")
 if (!file.exists(.ss_path)) {
   # Try finding any samplesheet
@@ -1395,47 +1415,37 @@ summary_display %>%
 
 ## Top hits per sequence
 
+```
 ```{r blast-detail}
-if (nrow(blast_raw) > 0) {
-  # Prepare metadata join with safe column selection
-  meta_to_join <- meta %>%
-    select(id, any_of("date")) %>%
-    rename(sseqid = id)
-  
-  if ("date" %in% names(meta_to_join)) {
-    meta_to_join <- meta_to_join %>% rename(hit_date = date)
-  }
-  
+if (nrow(blast_top) > 0) {
   blast_top %>%
     filter(hit_rank <= 10) %>%
-    left_join(meta_to_join, by = "sseqid") %>%
     select(
-      Query    = qseqid,
-      Rank     = hit_rank,
-      Hit      = sseqid,
+      Query = qseqid,
+      Rank = hit_rank,
+      Hit = sseqid,
       `% identity` = pident,
-      `Query cov%`  = qcovs,
-      `SNPs`        = mismatch,
-      `Bitscore`    = bitscore,
-      any_of(c("hit_genotype", "hit_variant", "hit_date"))
+      `Query cov%` = qcovs,
+      SNPs = mismatch,
+      Bitscore = bitscore,
+      Genotype = hit_genotype,
+      Variant = hit_variant
     ) %>%
-    rename_with(~case_when(
-      . == "hit_genotype" ~ "Genotype",
-      . == "hit_variant" ~ "Variant",
-      . == "hit_date" ~ "Date",
-      TRUE ~ .
-    )) %>%
     mutate(
       `% identity` = round(`% identity`, 2),
-      across(any_of(c("Genotype", "Variant", "Date")), 
-             ~replace_na(as.character(.), "—"))
+      Genotype = replace_na(as.character(Genotype), "—"),
+      Variant = replace_na(as.character(Variant), "—")
     ) %>%
     kbl() %>%
-    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = TRUE
+    ) %>%
     scroll_box(height = "500px")
 } else {
   cat("No BLAST results found.")
 }
+
 ```
 
 
@@ -2020,7 +2030,7 @@ variant_year <- as.numeric(format(Sys.Date(), "%Y"))
 
 # Check latest variant in database by NOR-YYYY pattern
 if (nrow(meta) > 0 && "variant" %in% names(meta)) {
-  db_lineages <- meta %>%
+  db_variant <- meta %>%
     filter(
       !is.na(variant), 
       variant !="",
@@ -2029,11 +2039,11 @@ if (nrow(meta) > 0 && "variant" %in% names(meta)) {
     pull(variant) %>%
     unique()
   
-  current_year_lineages <- db_lineages[grepl(paste0("^NOR-", variant_year), db_lineages)]
-  if (length(current_year_lineages) > 0) {
+  current_year_variant <- db_variant[grepl(paste0("^NOR-", variant_year), db_variant)]
+  if (length(current_year_variant) > 0) {
     # Extract version numbers (V1, V2, etc.) and sort numerically
     # Pattern: NOR-YYYY-VNN[a-z]? → extract NN part
-    base_versions <- as.numeric(gsub("^NOR-[0-9]+-V([0-9]+).*", "\\1", current_year_lineages))
+    base_versions <- as.numeric(gsub("^NOR-[0-9]+-V([0-9]+).*", "\\1", current_year_variant))
     latest_v <- max(base_versions, na.rm = TRUE)
     next_v <- latest_v + 1
   } else {
@@ -2043,10 +2053,10 @@ if (nrow(meta) > 0 && "variant" %in% names(meta)) {
   
   # Show recent variants grouped by base version with b/c suffixes
   # Sort by year descending, then version number numerically
-  cat("**Recent lineages in database:**\n\n")
+  cat("**Recent variants in database:**\n\n")
   
-  # Parse lineages to extract base version and suffix
-  variant_parsed <- tibble(variant = unique(db_lineages)) %>%
+  # Parse variants to extract base version and suffix
+  variant_parsed <- tibble(variant = unique(db_variant)) %>%
     filter(grepl("^NOR-", variant)) %>%
     mutate(
       # Extract year from variant (NOR-YYYY-Vx → YYYY)
@@ -2097,9 +2107,9 @@ if (nrow(meta) > 0 && "variant" %in% names(meta)) {
 # Build variant suggestions table with smart b/c suffix suggestion
 if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
   # Function to suggest next available suffix (b, c, d, etc.)
-  suggest_suffix <- function(base_lineage, existing_lineages) {
+  suggest_suffix <- function(base_variant, existing_variants) {
     # Get all variants of this variant in the database
-    variants <- existing_lineages[grepl(paste0("^", base_lineage, "[a-z]?$"), existing_lineages)]
+    variants <- existing_variants[grepl(paste0("^", base_variant, "[a-z]?$"), existing_variants)]
     
     if (length(variants) == 0) {
       # No variant exists, suggest 'b'
@@ -2128,7 +2138,7 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
   }
   
 
-  all_db_lineages <- meta %>%
+  all_db_variants <- meta %>%
   filter(!is.na(variant), variant != "") %>%
   pull(variant) %>%
   unique()
@@ -2136,14 +2146,14 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
   variant_suggestions <- summary_tbl %>%
     select(seqName, clade, blast_genotype, blast_variant, blast_mismatch, sseqid) %>%
     mutate(
-      lineage_suggestion = case_when(
+      variant_suggestion = case_when(
         !is.na(blast_mismatch) & blast_mismatch == 0 & !is.na(blast_variant) ~ blast_variant,
         !is.na(blast_mismatch) & blast_mismatch == 1 & !is.na(blast_variant) ~ {
-          suggested_suffix <- suggest_suffix(blast_variant, all_db_lineages)
+          suggested_suffix <- suggest_suffix(blast_variant, all_db_variants)
           paste0(blast_variant, suggested_suffix, " (1 SNP diff)")
         },
         !is.na(blast_mismatch) & blast_mismatch == 2 & !is.na(blast_variant) ~ {
-          suggested_suffix <- suggest_suffix(blast_variant, all_db_lineages)
+          suggested_suffix <- suggest_suffix(blast_variant, all_db_variants)
           paste0(blast_variant, suggested_suffix, " (2 SNP diff)")
         },
         is.na(blast_variant) ~ "No BLAST hit — needs manual assignment",
@@ -2161,7 +2171,7 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
       `BLAST hit` = sseqid,
       `SNPs` = blast_mismatch,
       `Hit variant` = blast_variant,
-      `Suggested variant` = lineage_suggestion,
+      `Suggested variant` = variant_suggestion,
       Notes = notes
     )
   
@@ -2523,9 +2533,9 @@ if (nrow(outbreak_candidates) == 0) {
     filter(n_total >= 3)
   
   if (nrow(outbreak_candidates_table) == 0) {
-    cat("*No lineages with ≥2 total sequences detected in batch.*\n\n")
+    cat("*No variants with ≥2 total sequences detected in batch.*\n\n")
   } else {
-    cat(sprintf("**Variants in batch:** %d variant group(s) with ≥2 sequences\n\n", nrow(outbreak_candidates_table)))
+    cat(sprintf("**Variants in batch:** %d variant group(s) with ≥2 total sequences\n\n", nrow(outbreak_candidates_table)))
     
     # Summary table 
     cat("**Variant overview (≥2 sequences):**\n\n")

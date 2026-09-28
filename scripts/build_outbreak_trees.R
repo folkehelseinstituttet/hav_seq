@@ -2,13 +2,13 @@
 #
 # build_outbreak_trees.R
 # ────────────────────────────────────────────────────────────────────────────
-# Generate and visualize phylogenetic trees for each lineage found in batch.
-# Creates PNG images combining batch sequences + database sequences per lineage.
+# Generate and visualize phylogenetic trees for each variant found in batch.
+# Creates PNG images combining batch sequences + database sequences per variant.
 #
 # Usage: Rscript build_outbreak_trees.R <output_dir> <dataset_date> <dataset_dir>
 #
 # Output:
-#   - <output_dir>/outbreak_trees/  (directory with PNG images per lineage)
+#   - <output_dir>/outbreak_trees/  (directory with PNG images per variant)
 #   - <output_dir>/.outbreak_trees.log  (detailed log of execution)
 #
 # ────────────────────────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ log_msg("✓ Created/verified outbreak_trees directory")
 
 # === LOAD DATA ===============================================================
 
-log_msg("\n--- Loading batch lineage assignments ---")
+log_msg("\n--- Loading batch variant assignments ---")
 
 # Read BLAST results (raw BLAST hits for batch sequences against database)
 blast_file <- file.path(output_dir, "blast_results.tsv")
@@ -136,19 +136,19 @@ tryCatch({
   log_msg("✓ Loaded %d database sequences", nrow(meta))
   log_msg("  Columns: %s", paste(names(meta), collapse = ", "))
   
-  # Check if lineage column exists (this is the variant in BLAST database metadata)
-  if (!"lineage" %in% names(meta)) {
-    log_msg("ERROR: 'lineage' column not found in database metadata")
+  # Check if variant column exists (this is the variant in BLAST database metadata)
+  if (!"variant" %in% names(meta)) {
+    log_msg("ERROR: 'variant' column not found in database metadata")
     log_msg("  Available columns: %s", paste(names(meta), collapse = ", "))
     quit(save = "no", status = 1)
   }
   
-  # Keep id and lineage columns (lineage = variants like NOR-2026-V6b)
+  # Keep id and variant columns (variant = variants like NOR-2026-V6b)
   meta <- meta %>%
-    select(id, lineage, genotype, date) %>%
-    filter(!is.na(lineage))
+    select(id, genotype, variant) %>%
+    filter(!is.na(variant))
   
-  log_msg("✓ Extracted %d database sequences with lineage (variant) assignments", nrow(meta))
+  log_msg("✓ Extracted %d database sequences with variant assignments", nrow(meta))
 }, error = function(e) {
   log_msg("ERROR loading database metadata: %s", conditionMessage(e))
   quit(save = "no", status = 1)
@@ -212,7 +212,7 @@ extract_base_variant <- function(variant) {
 }
 
 # Assign each batch sequence to the base variant of its best BLAST match
-batch_lineages <- blast_results %>%
+batch_variants <- blast_results %>%
   mutate(sseqid_norm = norm_id(sseqid)) %>%
   group_by(qseqid) %>%
   slice(1) %>%
@@ -220,15 +220,15 @@ batch_lineages <- blast_results %>%
   left_join(
     meta %>%
       mutate(id_norm = norm_id(id)) %>%
-      select(id_norm, lineage),
+      select(id_norm, variant),
     by = c("sseqid_norm" = "id_norm")
   ) %>%
-  select(seqName = qseqid, subject_id = sseqid, variant = lineage) %>%
+  select(seqName = qseqid, subject_id = sseqid, variant) %>%
   filter(!is.na(variant)) %>%
   # Group by base variant (remove sub-variant suffixes)
   mutate(base_variant = extract_base_variant(variant))
 
-n_assigned <- nrow(batch_lineages)
+n_assigned <- nrow(batch_variants)
 log_msg("✓ Assigned %d batch sequences to variants via BLAST", n_assigned)
 
 if (n_assigned == 0) {
@@ -236,21 +236,20 @@ if (n_assigned == 0) {
   quit(save = "no", status = 0)
 }
 
-batch_lineages_clean <- batch_lineages %>%
+batch_variants_clean <- batch_variants %>%
   filter(!is.na(base_variant))
 
-unique_lineages <- batch_lineages_clean %>%
+unique_variant <- batch_variants_clean %>%
   distinct(base_variant) %>%
   pull(base_variant) %>%
   sort()
 
-n_unique_variants <- length(unique_lineages)
+n_unique_variants <- length(unique_variant)
 log_msg("✓ Found %d unique base variants: %s", n_unique_variants, 
-        paste(unique_lineages, collapse = ", "))
+        paste(unique_variant, collapse = ", "))
 
-# Only generate trees if >= 3 unique base variants
-if (n_unique_variants < 3) {
-  log_msg("WARNING: Only %d variant(s) found. Skipping tree generation (need ≥3).", n_unique_variants)
+if (n_unique_variants == 0) {
+  log_msg("WARNING: No variants found. Skipping tree generation.")
   quit(save = "no", status = 0)
 }
 
@@ -314,11 +313,11 @@ if (!mafft_available) {
 
 n_trees_generated <- 0
 
-for (outbreak_variant in unique_lineages) {
+for (outbreak_variant in unique_variant) {
   log_msg("\nProcessing variant: %s", outbreak_variant)
   
   # Get batch sequences with this base variant
-  batch_seqs_list <- batch_lineages_clean %>%
+  batch_seqs_list <- batch_variants_clean %>%
     filter(base_variant == outbreak_variant) %>%
     pull(seqName)
   
@@ -328,9 +327,9 @@ for (outbreak_variant in unique_lineages) {
   # Get database sequences with this base variant
   # Match both the variant and any sub-variants (V6, V6a, V6b all match NOR-2024-V6)
   db_seqs_for_variant <- meta %>%
-    mutate(base_var = extract_base_variant(lineage)) %>%
+    mutate(base_var = extract_base_variant(variant)) %>%
     filter(base_var == outbreak_variant) %>%
-    select(id, lineage, genotype, date)
+    select(id, variant, genotype, date)
   
   n_db <- nrow(db_seqs_for_variant)
   log_msg("  Database sequences: %d", n_db)
@@ -386,14 +385,14 @@ for (outbreak_variant in unique_lineages) {
   log_msg("  Total sequences for tree: %d (batch + matched database)", n_total)
   
   # Add 1-2 outgroup sequences from OTHER variants for phylogenetic context
-  other_variants <- unique_lineages[unique_lineages != outbreak_variant]
+  other_variants <- unique_variant[unique_variant != outbreak_variant]
   if (length(other_variants) > 0 && !is.null(db_seqs_raw)) {
     n_outgroup <- min(2, length(other_variants))
     outgroup_variants <- sample(other_variants, n_outgroup)
     
     for (other_var in outgroup_variants) {
       other_id <- meta %>%
-        mutate(base_var = extract_base_variant(lineage)) %>%
+        mutate(base_var = extract_base_variant(variant)) %>%
         filter(base_var == other_var) %>%
         slice(1) %>%
         pull(id)
@@ -515,7 +514,7 @@ for (outbreak_variant in unique_lineages) {
         display_label = case_when(
           is_batch ~ sprintf("%s [%s]", label, outbreak_variant),
           is_outgroup ~ sprintf("%s [OUTGROUP]", base_id),
-          !is.na(lineage) ~ sprintf("%s [%s|%s]", base_id, lineage, replace_na(genotype, "Unknown")),
+          !is.na(variant) ~ sprintf("%s [%s|%s]", base_id, variant, replace_na(genotype, "Unknown")),
           TRUE ~ sprintf("%s [%s]", base_id, replace_na(genotype, "Unknown"))
         )
       )
