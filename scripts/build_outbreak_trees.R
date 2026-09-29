@@ -25,6 +25,7 @@ if (length(args) < 3) {
 output_dir <- args[1]
 dataset_date <- args[2]
 dataset_dir <- args[3]
+mafft_bin <- commandArgs(trailingOnly = TRUE)[4]
 
 dataset_version_dir <- file.path(dataset_dir, dataset_date)
 blast_db_dir <- file.path(dataset_version_dir, "blast_db")
@@ -306,9 +307,10 @@ lookup_db_seq <- function(id) {
   db_seqs_raw[[idx[1]]]
 }
 
-mafft_available <- nzchar(Sys.which("mafft"))
-if (!mafft_available) {
-  log_msg("ERROR: mafft not found on PATH. Cannot align outbreak sequences.")
+
+
+if (!file.exists(mafft_bin)) {
+  log_msg("ERROR: MAFFT not found: %s", mafft_bin)
   quit(save = "no", status = 1)
 }
 
@@ -432,7 +434,7 @@ for (outbreak_variant in unique_variant) {
     writeLines(cat_lines, raw_file_tmp)
     
     aln_file_tmp <- file.path(outbreak_trees_dir, sprintf("%s.fasta", variant_slug))
-    mafft_cmd <- sprintf("mafft --auto --quiet %s > %s", shQuote(raw_file_tmp), shQuote(aln_file_tmp))
+    mafft_cmd <- sprintf("%s --auto --quiet %s > %s", sshQuote(mafft_bin), sshQuote(raw_file_tmp), shQuote(aln_file_tmp))
     mafft_exit <- system(mafft_cmd)
     unlink(raw_file_tmp, force = TRUE)
     

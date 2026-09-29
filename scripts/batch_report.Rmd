@@ -2427,26 +2427,122 @@ d <- sum(s1[valid] != s2[valid])
     )
     batch_ann_colors <- list(Type = c(Batch = "#aec7e8"))
     
-    .tmp_batch_heat <- tempfile(fileext = ".png")
-    .pb_obj <- pheatmap(
-      batch_snp_mat,
-      color = colorRampPalette(c("#f7fbff", "#deebf7", "#9ecae1", "#3182bd", "#08519c", "#08306b"))(100),
-      clustering_distance_rows = as.dist(batch_snp_mat),
-      clustering_distance_cols = as.dist(batch_snp_mat),
-      clustering_method = "average",
-      display_numbers = TRUE,
-      number_format = "%d",
-      number_color = "black",
-      fontsize = 14,
-      fontsize_number = 12,
-      annotation_row = batch_ann_row,
-      annotation_colors = batch_ann_colors,
-      main = sprintf("Batch %s — SNP distances", batch_name),
-      silent = TRUE
+  # Prepare a robust colour scale for the batch SNP matrix
+batch_colors <- colorRampPalette(
+  c(
+    "#f7fbff",
+    "#deebf7",
+    "#9ecae1",
+    "#3182bd",
+    "#08519c",
+    "#08306b"
+  )
+)(100)
+
+batch_values <- as.numeric(batch_snp_mat)
+batch_values <- batch_values[is.finite(batch_values)]
+
+if (length(batch_values) == 0) {
+  cat("*Batch SNP matrix contains no finite values and cannot be plotted.*\n\n")
+} else {
+  batch_min <- min(batch_values)
+  batch_max <- max(batch_values)
+  batch_constant <- batch_min == batch_max
+
+  if (batch_constant) {
+    # A constant matrix, commonly all zeros, needs an artificial interval
+    # because pheatmap requires strictly increasing break values.
+    batch_breaks <- seq(
+      from = batch_min - 0.5,
+      to = batch_max + 0.5,
+      length.out = length(batch_colors) + 1
     )
-    ggsave(.tmp_batch_heat, plot = .pb_obj$gtable, width = 10, height = 10, dpi = 150)
-    cat(sprintf('<img src="%s" style="width:100%%;"/>\n\n', knitr::image_uri(.tmp_batch_heat)))
-    file.remove(.tmp_batch_heat)
+
+    batch_cluster_rows <- FALSE
+    batch_cluster_cols <- FALSE
+    batch_treeheight_row <- 0
+    batch_treeheight_col <- 0
+  } else {
+    batch_breaks <- seq(
+      from = batch_min,
+      to = batch_max,
+      length.out = length(batch_colors) + 1
+    )
+
+    batch_cluster_rows <- TRUE
+    batch_cluster_cols <- TRUE
+    batch_treeheight_row <- 50
+    batch_treeheight_col <- 50
+  }
+
+  # Final defensive validation
+  batch_breaks <- sort(unique(batch_breaks))
+
+  if (length(batch_breaks) < 2) {
+    batch_breaks <- c(batch_min - 0.5, batch_max + 0.5)
+  }
+
+  if (anyDuplicated(batch_breaks) > 0) {
+    stop("Internal error: batch heatmap breaks are not unique")
+  }
+
+  .tmp_batch_heat <- tempfile(fileext = ".png")
+
+  .pb_obj <- pheatmap(
+    batch_snp_mat,
+    color = batch_colors,
+    breaks = batch_breaks,
+    cluster_rows = batch_cluster_rows,
+    cluster_cols = batch_cluster_cols,
+    clustering_distance_rows = as.dist(batch_snp_mat),
+    clustering_distance_cols = as.dist(batch_snp_mat),
+    clustering_method = "average",
+    display_numbers = TRUE,
+    number_format = "%d",
+    number_color = "black",
+    fontsize = 14,
+    fontsize_number = 12,
+    annotation_row = batch_ann_row,
+    annotation_colors = batch_ann_colors,
+    legend = !batch_constant,
+    treeheight_row = batch_treeheight_row,
+    treeheight_col = batch_treeheight_col,
+    main = sprintf(
+      "Batch %s — SNP distances",
+      batch_name
+    ),
+    silent = TRUE
+  )
+
+  ggsave(
+    .tmp_batch_heat,
+    plot = .pb_obj$gtable,
+    width = 10,
+    height = 10,
+    dpi = 150
+  )
+
+  cat(
+    sprintf(
+      '<img src="%s" style="width:100%%;"/>\n',
+      .tmp_batch_heat
+    )
+  )
+
+  file.remove(.tmp_batch_heat)
+
+  if (batch_constant) {
+    cat(
+      sprintf(
+        paste0(
+          "*All pairwise batch SNP distances are %s. ",
+          "Clustering was disabled because the distance matrix is constant.*\n\n"
+        ),
+        batch_min
+      )
+    )
+  }
+}  
   } else {
   # end batch SNP heatmap display
     cat("*Batch SNP distance matrix could not be computed. Run the batch analysis script to generate:*\n\n")
