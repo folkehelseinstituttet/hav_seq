@@ -17,7 +17,7 @@
 
 # Parse command-line arguments
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) < 3) {
+if (length(args) < 5) {
   cat("Usage: Rscript build_outbreak_trees.R <output_dir> <dataset_date> <dataset_dir>\n")
   quit(save = "no", status = 1)
 }
@@ -25,7 +25,8 @@ if (length(args) < 3) {
 output_dir <- args[1]
 dataset_date <- args[2]
 dataset_dir <- args[3]
-mafft_bin <- commandArgs(trailingOnly = TRUE)[4]
+mafft_bin <- args[4]
+iqtree_bin <- args[5]
 
 dataset_version_dir <- file.path(dataset_dir, dataset_date)
 blast_db_dir <- file.path(dataset_version_dir, "blast_db")
@@ -308,11 +309,39 @@ lookup_db_seq <- function(id) {
 }
 
 
+log_msg("MAFFT executable: %s", mafft_bin)
+log_msg("IQ-TREE executable: %s", iqtree_bin)
 
-if (!file.exists(mafft_bin)) {
-  log_msg("ERROR: MAFFT not found: %s", mafft_bin)
+if (
+  is.na(mafft_bin) ||
+  !nzchar(mafft_bin) ||
+  !file.exists(mafft_bin)
+) {
+  log_msg("ERROR: MAFFT executable not found: %s", mafft_bin)
   quit(save = "no", status = 1)
 }
+
+if (file.access(mafft_bin, mode = 1) != 0) {
+  log_msg("ERROR: MAFFT is not executable: %s", mafft_bin)
+  quit(save = "no", status = 1)
+}
+
+if (
+  is.na(iqtree_bin) ||
+  !nzchar(iqtree_bin) ||
+  !file.exists(iqtree_bin)
+) {
+  log_msg("ERROR: IQ-TREE executable not found: %s", iqtree_bin)
+  quit(save = "no", status = 1)
+}
+
+if (file.access(iqtree_bin, mode = 1) != 0) {
+  log_msg("ERROR: IQ-TREE is not executable: %s", iqtree_bin)
+  quit(save = "no", status = 1)
+}
+
+log_msg("✓ MAFFT executable validated")
+log_msg("✓ IQ-TREE executable validated")
 
 n_trees_generated <- 0
 
@@ -434,9 +463,41 @@ for (outbreak_variant in unique_variant) {
     writeLines(cat_lines, raw_file_tmp)
     
     aln_file_tmp <- file.path(outbreak_trees_dir, sprintf("%s.fasta", variant_slug))
-    mafft_cmd <- sprintf("%s --auto --quiet %s > %s", sshQuote(mafft_bin), sshQuote(raw_file_tmp), shQuote(aln_file_tmp))
-    mafft_exit <- system(mafft_cmd)
-    unlink(raw_file_tmp, force = TRUE)
+    mafft_stderr <- file.path(
+  outbreak_trees_dir,
+  sprintf(".mafft_stderr_%s.log", variant_slug)
+)
+
+mafft_exit <- system2(
+  command = mafft_bin,
+  args = c(
+    "--auto",
+    "--quiet",
+    shQuote(raw_file_tmp)
+  ),
+  stdout = aln_file_tmp,
+  stderr = mafft_stderr
+)
+
+if (
+  mafft_exit != 0 ||
+  !file.exists(aln_file_tmp) ||
+  file.size(aln_file_tmp) == 0
+) {
+  log_msg("  ✗ MAFFT alignment failed (exit code %d)", mafft_exit)
+
+  if (file.exists(mafft_stderr)) {
+    mafft_output <- readLines(mafft_stderr, warn = FALSE)
+    for (line in mafft_output) {
+      log_msg("      %s", line)
+    }
+  }
+
+  next
+}
+
+unlink(raw_file_tmp, force = TRUE)
+unlink(mafft_stderr, force = TRUE)
     
     if (mafft_exit != 0 || !file.exists(aln_file_tmp) || file.size(aln_file_tmp) == 0) {
       log_msg("  ✗ MAFFT alignment failed (exit code %d)", mafft_exit)
@@ -451,10 +512,42 @@ for (outbreak_variant in unique_variant) {
     stdout_log <- file.path(outbreak_trees_dir, sprintf(".iqtree_stdout_%s.log", variant_slug))
     stderr_log <- file.path(outbreak_trees_dir, sprintf(".iqtree_stderr_%s.log", variant_slug))
     
-    iqtree_cmd <- sprintf("iqtree -s %s -m JC -nt AUTO -fast -redo 2>&1 | tee %s", aln_file_tmp, stdout_log)
-    iqtree_exit <- system(iqtree_cmd)
-    
-    log_msg("    IQ-TREE exit code: %d", iqtree_exit)
+    iqtree_cmd <- sprintf("%s -s %s -m JC -nt AUTO -fast -redo 2>&1 | tee %s", shQuote(iqtree_bin), shQuote(aln_file_tmp), shQuote(stdout_log))
+   iqtree_exit <- system2(
+  command = iqtree_bin,
+  args = c(
+    "-s", shQuote(aln_file_tmp),
+    "-m", "JC",
+    "-nt", "AUTO",
+    "-fast",
+    "-redo"
+  ),
+  stdout = stdout_log,
+  stderr = stderr_log
+)
+
+log_msg("    IQ-TREE exit code: %d", iqtree_exit)
+
+if (iqtree_exit != 0 || !file.exists(tree_file)) {
+  if (file.exists(stdout_log)) {
+    log_msg("    IQ-TREE stdout:")
+    iqtree_out <- readLines(stdout_log, warn = FALSE)
+    for (line in iqtree_out) {
+      log_msg("      %s", line)
+    }
+  }
+
+  if (file.exists(stderr_log)) {
+    log_msg("    IQ-TREE stderr:")
+    iqtree_err <- readLines(stderr_log, warn = FALSE)
+    for (line in iqtree_err) {
+      log_msg("      %s", line)
+    }
+  }
+
+  log_msg("  ✗ IQ-TREE failed or tree file was not created")
+  next
+}
     
     # IQ-TREE appends .treefile to the INPUT filename, not the stem
     # So if input is file.fa, it creates file.fa.treefile

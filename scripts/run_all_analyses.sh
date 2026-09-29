@@ -275,14 +275,42 @@ echo "  SNP matrix → $OUT_BASE/snp_matrices/batch_snp_distances.tsv"
 echo ""
 
 
-# ── Analysis 5: Outbreak-specific phylogenetics ────────────────────────────────
+# ── Analysis 5: Outbreak-specific phylogenetics ──────────────────────────────
 echo "▶ Step 5/6: Outbreak lineage trees (batch + database sequences)"
 echo "─────────────────────────────────────────────────────────────────"
-MAFFT_BIN=$(conda run -n iqtree-mafft bash -c 'which mafft' | tail -n1)
-# Pass arguments directly to preserve spaces in paths
-conda run -n R_shared Rscript "$HAV_SEQ_REPO/scripts/build_outbreak_trees.R" "$OUT_BASE" "$DATASET_DATE" "$DATASET_DIR" "$MAFFT_BIN" || {
-  echo "WARNING: Outbreak tree generation failed (report will not include lineage trees)"
-}
+
+MAFFT_BIN="$(
+  conda run -n iqtree-mafft which mafft 2>/dev/null |
+  tr -d '\r' |
+  grep -v '^[[:space:]]*$' |
+  tail -n 1
+)"
+
+IQTREE_BIN="$(
+  conda run -n iqtree-mafft which iqtree 2>/dev/null |
+  tr -d '\r' |
+  grep -v '^[[:space:]]*$' |
+  tail -n 1
+)"
+
+printf 'MAFFT=[%s]\n' "$MAFFT_BIN"
+printf 'IQTREE=[%s]\n' "$IQTREE_BIN"
+
+[[ -x "$MAFFT_BIN" ]] && echo "MAFFT OK" || echo "MAFFT NOT EXECUTABLE"
+[[ -x "$IQTREE_BIN" ]] && echo "IQ-TREE OK" || echo "IQ-TREE NOT EXECUTABLE"
+
+
+conda run -n R_shared -- Rscript \
+  "$HAV_SEQ_REPO/scripts/build_outbreak_trees.R" \
+  "$OUT_BASE" \
+  "$DATASET_DATE" \
+  "$DATASET_DIR" \
+  "$MAFFT_BIN" \
+  "$IQTREE_BIN" || {
+    echo "WARNING: Outbreak tree generation failed"
+    echo "         Report will not include outbreak lineage trees"
+  }
+
 echo "  Results → $OUT_BASE/outbreak_trees/"
 echo ""
 

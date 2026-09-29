@@ -53,6 +53,13 @@ batch_dir    <- file.path(params$batch_dir)
 #out_dir      <- file.path(batch_dir, "output")
 out_dir      <- file.path(params$out_base)
 trees_dir    <- file.path(out_dir, "trees")
+# Permanent directory for figures generated while rendering the report
+report_figures_dir <- file.path(out_dir, "report_figures")
+dir.create(
+report_figures_dir,
+recursive = TRUE,
+showWarnings = FALSE
+)
 #dataset_base <- file.path(proj_dir, "data", "local_dataset", params$dataset_date)
 dataset_base <- file.path(params$dataset_dir)
 dataset_root <- dirname(dataset_base)
@@ -1294,11 +1301,26 @@ if (has_amplicon && nrow(amplicon_long) > 0) {
     theme(legend.position = "bottom",
           panel.grid.major.x = element_blank())
 
-  .tmp_amp <- tempfile(fileext = ".png")
-  ggsave(.tmp_amp, plot = p_amp, width = 12,
-         height = 2.4 * ceiling(n_samples / 4) + 1, dpi = 150, limitsize = FALSE)
-  cat(sprintf('<img src="%s" style="width:100%%;"/>\n\n', knitr::image_uri(.tmp_amp)))
-  file.remove(.tmp_amp)
+amplicon_coverage_png <- file.path(
+  report_figures_dir,
+  "amplicon_coverage.png"
+)
+ggsave(
+  filename = amplicon_coverage_png,
+  plot = p_amp,
+  width = 12,
+  height = 2.4 * ceiling(n_samples / 4) + 1,
+  dpi = 150,
+  limitsize = FALSE
+)
+
+if (!file.exists(amplicon_coverage_png)) {
+  stop("Amplicon coverage figure was not created: ", amplicon_coverage_png)
+}
+
+cat(sprintf(
+  '<img src="%s" style="width:100%%;content-fit:contain;"/>\n\n', amplicon_coverage_png)
+)
 
   # Mean coverage per amplicon across the batch (compact summary table)
   amp_mean <- amplicon_long %>%
@@ -1446,9 +1468,6 @@ if (nrow(blast_top) > 0) {
 }
 
 ```
-
-
-
 ---
 
 # 4. Per-sequence details {.tabset}
@@ -1552,10 +1571,33 @@ query_ids_normalized <- word(query_ids, 1)
 }
 
 .embed_img <- function(path) {
+  if (!file.exists(path)) {
+    cat(
+      sprintf(
+        "*(Image file not found: %s)*\n\n",
+        basename(path)
+      )
+    )
+    return(invisible(FALSE))
+  }
+
+  image_src <- knitr::image_uri(
+    normalizePath(path, mustWork = TRUE)
+  )
+
   cat(sprintf(
-    '<img src="%s" onclick="document.getElementById(\'tree-lightbox-img\').src=this.src; var lb=document.getElementById(\'tree-lightbox\'); lb.style.display=\'flex\';" style="width:100%%; cursor:zoom-in; border:1px solid #ddd; border-radius:4px; margin-bottom:12px;" title="Click to enlarge"/>\n',
-    knitr::image_uri(path)
+    paste0(
+      '<img src="%s" ',
+      'onclick="document.getElementById(\'tree-lightbox-img\').src=this.src; ',
+      'var lb=document.getElementById(\'tree-lightrsor:zoom-in; ',
+      'border:1px solid #ddd; border-radius:4px; ',
+      'margin-bottom:12px;" ',
+      'title="Click to enlarge"/>\n\n'
+    ),
+    image_src
   ))
+
+  invisible(TRUE)
 }
 
 treefile_exists <- sapply(query_ids_normalized, function(id) file.exists(file.path(trees_dir, id, "tree.treefile")))
@@ -2023,7 +2065,16 @@ if (length(finite_snp_values) == 0) {
     heat_breaks <- c(snp_min - 0.5, snp_max + 0.5)
   }
 
-  .tmp_heat <- tempfile(fileext = ".png")
+  safe_query_filename <- gsub(
+  "[^A-Za-z0-9._-]",
+  "_",
+  query_id
+)
+
+heatmap_png <- file.path(
+  report_figures_dir,
+  paste0(safe_query_filename, "_snp_heatmap.png")
+)
 
   .ph_obj <- pheatmap(
     snp_mat,
@@ -2053,7 +2104,7 @@ if (length(finite_snp_values) == 0) {
   )
 
   ggsave(
-    .tmp_heat,
+    heatmap_png,
     plot = .ph_obj$gtable,
     width = px,
     height = px,
@@ -2061,8 +2112,11 @@ if (length(finite_snp_values) == 0) {
     limitsize = FALSE
   )
 
-  .embed_img(.tmp_heat)
-  file.remove(.tmp_heat)
+  if (!file.exists(heatmap_png)) {
+  stop("SNP heatmap was not created: ", heatmap_png)
+}
+
+.embed_img(heatmap_png)
 
   if (constant_snp_matrix) {
     cat(
@@ -2348,10 +2402,26 @@ if (length(batch_seqs_in_alignment) < 2) {
       labs(title = sprintf("Batch %s — Phylogenetic tree (batch samples only)", batch_name),
            subtitle = "Phylogenetic relationships among batch sequences")
     
-    .tmp_batch_tree <- tempfile(fileext = ".png")
-    ggsave(.tmp_batch_tree, plot = p_batch, width = 14, height = 8, dpi = 150)
-    cat(sprintf('<img src="%s" style="width:100%%;"/>\n\n', knitr::image_uri(.tmp_batch_tree)))
-    file.remove(.tmp_batch_tree)
+    batch_tree_png <- file.path(
+  report_figures_dir,
+  "batch_phylogenetic_tree.png"
+)
+
+ggsave(
+  filename = batch_tree_png,
+  plot = p_batch,
+  width = 14,
+  height = 8,
+  dpi = 150
+)
+
+if (!file.exists(batch_tree_png)) {
+  stop("Batch phylogenetic tree figure was not created: ", batch_tree_png)
+}
+
+cat(sprintf(
+  '<img src="%s" style="width:100%%;content-fit:contain;"/>\n\n', knitr::image_uri(batch_tree_png)
+))
   } # end batch tree visualization
   
   cat("## Batch SNP distance heatmap\n\n")
@@ -2486,50 +2556,55 @@ if (length(batch_values) == 0) {
     stop("Internal error: batch heatmap breaks are not unique")
   }
 
-  .tmp_batch_heat <- tempfile(fileext = ".png")
+  batch_heatmap_png <- file.path(
+  report_figures_dir,
+  "batch_snp_heatmap.png"
+)
 
-  .pb_obj <- pheatmap(
-    batch_snp_mat,
-    color = batch_colors,
-    breaks = batch_breaks,
-    cluster_rows = batch_cluster_rows,
-    cluster_cols = batch_cluster_cols,
-    clustering_distance_rows = as.dist(batch_snp_mat),
-    clustering_distance_cols = as.dist(batch_snp_mat),
-    clustering_method = "average",
-    display_numbers = TRUE,
-    number_format = "%d",
-    number_color = "black",
-    fontsize = 14,
-    fontsize_number = 12,
-    annotation_row = batch_ann_row,
-    annotation_colors = batch_ann_colors,
-    legend = !batch_constant,
-    treeheight_row = batch_treeheight_row,
-    treeheight_col = batch_treeheight_col,
-    main = sprintf(
-      "Batch %s — SNP distances",
-      batch_name
-    ),
-    silent = TRUE
-  )
+.pb_obj <- pheatmap(
+  batch_snp_mat,
+  color = batch_colors,
+  breaks = batch_breaks,
+  cluster_rows = batch_cluster_rows,
+  cluster_cols = batch_cluster_cols,
+  clustering_distance_rows = as.dist(batch_snp_mat),
+  clustering_distance_cols = as.dist(batch_snp_mat),
+  clustering_method = "average",
+  display_numbers = TRUE,
+  number_format = "%d",
+  number_color = "black",
+  fontsize = 14,
+  fontsize_number = 12,
+  annotation_row = batch_ann_row,
+  annotation_colors = batch_ann_colors,
+  legend = !batch_constant,
+  treeheight_row = batch_treeheight_row,
+  treeheight_col = batch_treeheight_col,
+  main = sprintf(
+    "Batch %s - SNP distances",
+    batch_name
+  ),
+  silent = TRUE
+)
 
-  ggsave(
-    .tmp_batch_heat,
-    plot = .pb_obj$gtable,
-    width = 10,
-    height = 10,
-    dpi = 150
-  )
+ggsave(
+  filename = batch_heatmap_png,
+  plot = .pb_obj$gtable,
+  width = 10,
+  height = 10,
+  dpi = 150
+)
 
-  cat(
-    sprintf(
-      '<img src="%s" style="width:100%%;"/>\n',
-      .tmp_batch_heat
-    )
-  )
+if (!file.exists(batch_heatmap_png)) {
+  stop("Batch SNP heatmap was not created: ", batch_heatmap_png)
+}
 
-  file.remove(.tmp_batch_heat)
+cat(sprintf(
+  '<img src="%s" style="width:100%%;"/>\n',
+  batch_heatmap_png
+))
+
+
 
   if (batch_constant) {
     cat(
@@ -2861,7 +2936,11 @@ tibble(
     file.path(params$out_base, "outbreak_trees", "<Variant>.fasta"),
     file.path(params$out_base, "outbreak_trees", "<Variant>.png"),
     file.path(params$out_base, "summary.tsv"),
-    file.path(params$out_base, "comparison.tsv")
+    file.path(params$out_base, "comparison.tsv"),
+    file.path(params$out_base, "report_figures", "amplicon_coverage.png"),
+    file.path(params$out_base, "report_figures", "batch_phylogenetic_tree.png"),
+    file.path(params$out_base, "report_figures", "batch_snp_heatmap.png"),
+    file.path(params$out_base, "report_figures", "<seqName>_snp_heatmap.png"),
   ),
   Description = c(
     "BLAST hits vs local HAV database",
@@ -2874,7 +2953,12 @@ tibble(
     "Outbreak phylogenetic alignment: batch sequences + database sequences for each variant (FASTA)",
     "Outbreak phylogenetic tree visualization (PNG) per HAV variant",
     "Per-sequence summary table (this report, TSV)",
-    "Clade comparison table (this report, TSV)"
+    "Clade comparison table (this report, TSV)",
+    "Report figure: amplicon coverage plot",
+    "Report figure: batch phylogenetic tree",
+    "Report figure: batch SNP heatmap",
+    "Report figure: per-sequence SNP heatmap"
+
   )
 ) %>%
   kbl() %>%
