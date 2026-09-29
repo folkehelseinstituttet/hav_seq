@@ -18,7 +18,13 @@
 # Parse command-line arguments
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 5) {
-  cat("Usage: Rscript build_outbreak_trees.R <output_dir> <dataset_date> <dataset_dir>\n")
+  cat(
+    paste0(
+      "Usage: Rscript build_outbreak_trees.R ",
+      "<output_dir> <dataset_date> <dataset_dir> ",
+      "<mafft_bin> <iqtree_bin>\n"
+    )
+  )
   quit(save = "no", status = 1)
 }
 
@@ -507,9 +513,7 @@ unlink(mafft_stderr, force = TRUE)
     stdout_log <- file.path(outbreak_trees_dir, sprintf(".iqtree_stdout_%s.log", variant_slug))
     stderr_log <- file.path(outbreak_trees_dir, sprintf(".iqtree_stderr_%s.log", variant_slug))
     
-    iqtree_cmd <- sprintf("%s -s %s -m JC -nt AUTO -fast -redo 2>&1 | tee %s", shQuote(iqtree_bin), shQuote(aln_file_tmp), shQuote(stdout_log))
-     
-# IQ-TREE appends .treefile to the full input filename
+   # IQ-TREE appends .treefile to the full input filename
 tree_file <- paste0(aln_file_tmp, ".treefile")
 
 stdout_log <- file.path(
@@ -561,7 +565,39 @@ if (iqtree_exit != 0 || !file.exists(tree_file)) {
   log_msg("  ✗ IQ-TREE failed or tree file was not created")
   next
 }
-    
+  # Read the IQ-TREE result into R
+outbreak_tree <- tryCatch(
+  {
+    ape::read.tree(tree_file)
+  },
+  error = function(e) {
+    log_msg(
+      "  ✗ Could not read IQ-TREE tree file %s: %s",
+      basename(tree_file),
+      conditionMessage(e)
+    )
+    NULL
+  }
+)
+
+if (is.null(outbreak_tree)) {
+  next
+}
+
+log_msg(
+  "  ✓ Loaded phylogenetic tree with %d tips",
+  length(outbreak_tree$tip.label)
+)
+
+# Validate tree structure before visualization
+if (
+  length(outbreak_tree$tip.label) == 0 ||
+  any(is.na(outbreak_tree$tip.label)) ||
+  any(!nzchar(outbreak_tree$tip.label))
+) {
+  log_msg("  ✗ Invalid tree structure: empty or missing tip labels")
+  next
+}  
     # Validate tree structure before visualization
     if (length(outbreak_tree$tip.label) == 0 || any(is.na(outbreak_tree$tip.label))) {
       log_msg("  ✗ Invalid tree structure (empty or missing tip labels)")
@@ -647,18 +683,21 @@ if (iqtree_exit != 0 || !file.exists(tree_file)) {
       log_msg("  ✗ Error saving PNG: %s", e$message)
     })
     
-    # Preserve alignment file (.fa) for documentation, clean up IQ-TREE temp files
-    # Keep: .fa (alignment)
-    # Remove: .iqtree, .log, .mldist, .treefile (IQ-TREE intermediates)
-    unlink(paste0(tree_out_prefix, ".iqtree"), force = TRUE)
-    unlink(paste0(tree_out_prefix, ".log"), force = TRUE)
-    unlink(paste0(tree_out_prefix, ".mldist"), force = TRUE)
-    unlink(paste0(tree_out_prefix, ".treefile"), force = TRUE)
-    unlink(paste0(tree_out_prefix, ".uniqueseq.phy"), force = TRUE)
-    unlink(stdout_log, force = TRUE)
-    unlink(stderr_log, force = TRUE)
-    
-    log_msg("  ✓ Alignment preserved: %s", basename(aln_file_tmp))
+    # Preserve the MAFFT alignment, but remove IQ-TREE intermediate files
+iqtree_prefix <- aln_file_tmp
+
+unlink(paste0(iqtree_prefix, ".bionj"), force = TRUE)
+unlink(paste0(iqtree_prefix, ".ckp.gz"), force = TRUE)
+unlink(paste0(iqtree_prefix, ".iqtree"), force = TRUE)
+unlink(paste0(iqtree_prefix, ".log"), force = TRUE)
+unlink(paste0(iqtree_prefix, ".mldist"), force = TRUE)
+#unlink(paste0(iqtree_prefix, ".treefile"), force = TRUE)
+unlink(paste0(iqtree_prefix, ".uniqueseq.phy"), force = TRUE)
+
+unlink(stdout_log, force = TRUE)
+unlink(stderr_log, force = TRUE)
+
+log_msg("  ✓ Alignment preserved: %s", basename(aln_file_tmp))
     
   }, error = function(e) {
     log_msg("  ✗ Error: %s", e$message)
