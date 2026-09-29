@@ -15,6 +15,7 @@ params:
   dataset_date: "2026-04-10"
   dataset_dir:  "data/local_dataset/2026-04-10"
   out_base:     "data/Batch-1/output"
+  final_output_dir: ""
   n_neighbors:  30
   mode:         "sanger"
   zoom_count: 5
@@ -2918,21 +2919,21 @@ n_blast_agree <- sum(summary_tbl$clade_agree_blast == TRUE, na.rm = TRUE)
 ```{r output-files}
 tibble(
   File = c(
-    file.path(params$out_base, "blast_results.tsv"),
-    file.path(params$out_base, "lineages", "nextclade.tsv"),
-    file.path(params$out_base, "trees", "<seqName>", "tree.treefile"),
-    file.path(params$out_base, "trees", "<seqName>", "tree.png"),
-    file.path(params$out_base, "trees", "<seqName>", "<seqName>.aligned_trimmed.fasta"),
-    file.path(params$out_base, "trees", "<seqName>", "aligned_trimmed_blast_only.fa"),
-    file.path(params$out_base, "snp_matrices", "<seqName>_snp_distances.tsv"),
-    file.path(params$out_base, "outbreak_trees", "<Variant>.fasta"),
-    file.path(params$out_base, "outbreak_trees", "<Variant>.png"),
-    file.path(params$out_base, "summary.tsv"),
-    file.path(params$out_base, "comparison.tsv"),
-    file.path(params$out_base, "report_figures", "amplicon_coverage.png"),
-    file.path(params$out_base, "report_figures", "batch_phylogenetic_tree.png"),
-    file.path(params$out_base, "report_figures", "batch_snp_heatmap.png"),
-    file.path(params$out_base, "report_figures", "<seqName>_snp_heatmap.png")
+    file.path(params$final_output_dir, "blast_results.tsv"),
+    file.path(params$final_output_dir, "lineages", "nextclade.tsv"),
+    file.path(params$final_output_dir, "trees", "<seqName>", "tree.treefile"),
+    file.path(params$final_output_dir, "trees", "<seqName>", "tree.png"),
+    file.path(params$final_output_dir, "trees", "<seqName>", "<seqName>.aligned_trimmed.fasta"),
+    file.path(params$final_output_dir, "trees", "<seqName>", "aligned_trimmed_blast_only.fa"),
+    file.path(params$final_output_dir, "snp_matrices", "<seqName>_snp_distances.tsv"),
+    file.path(params$final_output_dir, "outbreak_trees", "<Variant>.fasta"),
+    file.path(params$final_output_dir, "outbreak_trees", "<Variant>.png"),
+    file.path(params$final_output_dir, "summary.tsv"),
+    file.path(params$final_output_dir, "comparison.tsv"),
+    file.path(params$final_output_dir, "report_figures", "amplicon_coverage.png"),
+    file.path(params$final_output_dir, "report_figures", "batch_phylogenetic_tree.png"),
+    file.path(params$final_output_dir, "report_figures", "batch_snp_heatmap.png"),
+    file.path(params$final_output_dir, "report_figures", "<seqName>_snp_heatmap.png")
   ),
   Description = c(
     "BLAST hits vs local HAV database",
@@ -2968,8 +2969,8 @@ clade_comp_out <- clade_comp %>%
 write_tsv(clade_comp_out, file.path(params$out_base, "comparison.tsv"))
 ```
 
-*Summary written to `r file.path(params$out_base, "summary.tsv")`*  
-*Comparison written to `r file.path(params$out_base, "comparison.tsv")`*
+*Summary written to `r file.path(params$final_output_dir, "summary.tsv")`*  
+*Comparison written to `r file.path(params$final_output_dir, "comparison.tsv")`*
 
 ---
 
