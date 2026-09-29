@@ -300,7 +300,7 @@ printf 'IQTREE=[%s]\n' "$IQTREE_BIN"
 [[ -x "$IQTREE_BIN" ]] && echo "IQ-TREE OK" || echo "IQ-TREE NOT EXECUTABLE"
 
 
-conda run -n R_shared -- Rscript \
+conda run -n R_shared Rscript \
   "$HAV_SEQ_REPO/scripts/build_outbreak_trees.R" \
   "$OUT_BASE" \
   "$DATASET_DATE" \

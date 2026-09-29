@@ -499,11 +499,6 @@ if (
 unlink(raw_file_tmp, force = TRUE)
 unlink(mafft_stderr, force = TRUE)
     
-    if (mafft_exit != 0 || !file.exists(aln_file_tmp) || file.size(aln_file_tmp) == 0) {
-      log_msg("  ✗ MAFFT alignment failed (exit code %d)", mafft_exit)
-      next
-    }
-    log_msg("    Alignment written to: %s", basename(aln_file_tmp))
     
     # Build tree with IQ-TREE
     tree_out_prefix <- sub("\\.fasta$", "", aln_file_tmp)
@@ -513,10 +508,24 @@ unlink(mafft_stderr, force = TRUE)
     stderr_log <- file.path(outbreak_trees_dir, sprintf(".iqtree_stderr_%s.log", variant_slug))
     
     iqtree_cmd <- sprintf("%s -s %s -m JC -nt AUTO -fast -redo 2>&1 | tee %s", shQuote(iqtree_bin), shQuote(aln_file_tmp), shQuote(stdout_log))
-   iqtree_exit <- system2(
+     
+# IQ-TREE appends .treefile to the full input filename
+tree_file <- paste0(aln_file_tmp, ".treefile")
+
+stdout_log <- file.path(
+  outbreak_trees_dir,
+  sprintf(".iqtree_stdout_%s.log", variant_slug)
+)
+
+stderr_log <- file.path(
+  outbreak_trees_dir,
+  sprintf(".iqtree_stderr_%s.log", variant_slug)
+)
+
+iqtree_exit <- system2(
   command = iqtree_bin,
   args = c(
-    "-s", shQuote(aln_file_tmp),
+    "-s", aln_file_tmp,
     "-m", "JC",
     "-nt", "AUTO",
     "-fast",
@@ -527,11 +536,14 @@ unlink(mafft_stderr, force = TRUE)
 )
 
 log_msg("    IQ-TREE exit code: %d", iqtree_exit)
+log_msg("    Looking for: %s", basename(tree_file))
+log_msg("    Exists: %s", file.exists(tree_file))
 
 if (iqtree_exit != 0 || !file.exists(tree_file)) {
   if (file.exists(stdout_log)) {
     log_msg("    IQ-TREE stdout:")
     iqtree_out <- readLines(stdout_log, warn = FALSE)
+
     for (line in iqtree_out) {
       log_msg("      %s", line)
     }
@@ -540,6 +552,7 @@ if (iqtree_exit != 0 || !file.exists(tree_file)) {
   if (file.exists(stderr_log)) {
     log_msg("    IQ-TREE stderr:")
     iqtree_err <- readLines(stderr_log, warn = FALSE)
+
     for (line in iqtree_err) {
       log_msg("      %s", line)
     }
@@ -548,32 +561,6 @@ if (iqtree_exit != 0 || !file.exists(tree_file)) {
   log_msg("  ✗ IQ-TREE failed or tree file was not created")
   next
 }
-    
-    # IQ-TREE appends .treefile to the INPUT filename, not the stem
-    # So if input is file.fa, it creates file.fa.treefile
-    tree_file <- paste0(aln_file_tmp, ".treefile")
-    
-    log_msg("    Looking for: %s", basename(tree_file))
-    log_msg("    Exists: %s", file.exists(tree_file))
-    
-    if (!file.exists(tree_file)) {
-      # Show IQ-TREE output for debugging
-      if (file.exists(stdout_log)) {
-        log_msg("    IQ-TREE stdout:")
-        iqtree_out <- readLines(stdout_log)
-        for (line in iqtree_out) {
-          log_msg("      %s", line)
-        }
-      }
-      log_msg("  ✗ IQ-TREE tree file not found")
-      unlink(paste0(tree_out_prefix, ".*"), force = TRUE)
-      next
-    }
-    
-    # Read and root tree
-    outbreak_tree <- read.tree(tree_file)
-    outbreak_tree <- phangorn::midpoint(outbreak_tree)
-    log_msg("  ✓ Tree built with %d tips", length(outbreak_tree$tip.label))
     
     # Validate tree structure before visualization
     if (length(outbreak_tree$tip.label) == 0 || any(is.na(outbreak_tree$tip.label))) {

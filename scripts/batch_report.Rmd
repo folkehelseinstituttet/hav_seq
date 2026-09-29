@@ -1318,9 +1318,7 @@ if (!file.exists(amplicon_coverage_png)) {
   stop("Amplicon coverage figure was not created: ", amplicon_coverage_png)
 }
 
-cat(sprintf(
-  '<img src="%s" style="width:100%%;content-fit:contain;"/>\n\n', amplicon_coverage_png)
-)
+.embed_img(amplicon_coverage_png)
 
   # Mean coverage per amplicon across the batch (compact summary table)
   amp_mean <- amplicon_long %>%
@@ -2419,9 +2417,7 @@ if (!file.exists(batch_tree_png)) {
   stop("Batch phylogenetic tree figure was not created: ", batch_tree_png)
 }
 
-cat(sprintf(
-  '<img src="%s" style="width:100%%;content-fit:contain;"/>\n\n', knitr::image_uri(batch_tree_png)
-))
+.embed_img(batch_tree_png)
   } # end batch tree visualization
   
   cat("## Batch SNP distance heatmap\n\n")
@@ -2599,11 +2595,7 @@ if (!file.exists(batch_heatmap_png)) {
   stop("Batch SNP heatmap was not created: ", batch_heatmap_png)
 }
 
-cat(sprintf(
-  '<img src="%s" style="width:100%%;"/>\n',
-  batch_heatmap_png
-))
-
+.embed_img(batch_heatmap_png)
 
 
   if (batch_constant) {
@@ -2940,7 +2932,7 @@ tibble(
     file.path(params$out_base, "report_figures", "amplicon_coverage.png"),
     file.path(params$out_base, "report_figures", "batch_phylogenetic_tree.png"),
     file.path(params$out_base, "report_figures", "batch_snp_heatmap.png"),
-    file.path(params$out_base, "report_figures", "<seqName>_snp_heatmap.png"),
+    file.path(params$out_base, "report_figures", "<seqName>_snp_heatmap.png")
   ),
   Description = c(
     "BLAST hits vs local HAV database",
@@ -2973,7 +2965,7 @@ write_tsv(summary_tbl, file.path(params$out_base, "summary.tsv"))
 clade_comp_out <- clade_comp %>%
   left_join(summary_tbl %>% select(seqName, blast_mismatch = blast_mismatch,
                                     blast_pident, blast_qcovs), by = "seqName")
-write_tsv(clade_comp_out, file.path(out_dir, "comparison.tsv"))
+write_tsv(clade_comp_out, file.path(params$out_base, "comparison.tsv"))
 ```
 
 *Summary written to `r file.path(params$out_base, "summary.tsv")`*  
