@@ -213,9 +213,10 @@ extract_base_variant <- function(variant) {
 
 # Assign each batch sequence to the base variant of its best BLAST match
 batch_variants <- blast_results %>%
+  arrange(qseqid, mismatch, desc(bitscore)) %>%
   mutate(sseqid_norm = norm_id(sseqid)) %>%
   group_by(qseqid) %>%
-  slice(1) %>%
+  slice_head(n = 1) %>%
   ungroup() %>%
   left_join(
     meta %>%
@@ -329,7 +330,7 @@ for (outbreak_variant in unique_variant) {
   db_seqs_for_variant <- meta %>%
     mutate(base_var = extract_base_variant(variant)) %>%
     filter(base_var == outbreak_variant) %>%
-    select(id, variant, genotype, date)
+    select(id, variant, genotype)
   
   n_db <- nrow(db_seqs_for_variant)
   log_msg("  Database sequences: %d", n_db)

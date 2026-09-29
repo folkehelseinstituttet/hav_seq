@@ -1415,7 +1415,6 @@ summary_display %>%
 
 ## Top hits per sequence
 
-```
 ```{r blast-detail}
 if (nrow(blast_top) > 0) {
   blast_top %>%
@@ -1968,37 +1967,112 @@ meta_tbl <- tip_info %>%
     # Calculate figure size with minimum/maximum constraints
     px <- min(18, max(10, n_tips * (cell_size / 35)))
     
-    # Continuous blue palette for all SNP distances
-    color_func <- colorRampPalette(c("#f7fbff", "#deebf7", "#9ecae1", "#3182bd", "#08519c", "#08306b"))(100)
-    
-    .tmp_heat <- tempfile(fileext = ".png")
-    .ph_obj <- pheatmap(
-      snp_mat,
-      # Color palette: continuous blue
-      color            = color_func,
-      clustering_distance_rows = as.dist(snp_mat),
-      clustering_distance_cols = as.dist(snp_mat),
-      clustering_method        = "average",
-      display_numbers          = TRUE,
-      number_format            = "%d",
-      number_color             = "black",      # Improved contrast
-      fontsize                 = fontsize_main,
-      fontsize_number          = fontsize_num,
-      fontsize_row             = fontsize_row,
-      annotation_row           = ann_row,
-      annotation_colors        = ann_colors,
-      legend                   = TRUE,
-      main                     = paste("Pairwise SNP distances \u2014", query_id),
-      treeheight_row           = 100,
-      treeheight_col           = 100,
-      border_color             = "#cccccc",    # Subtle borders for better separation
-      gaps_row                 = which(rownames(snp_mat) == query_lbl),
-      gaps_col                 = which(colnames(snp_mat) == query_lbl),
-      silent                   = TRUE
+    # Continuous blue palette for SNP distances
+color_func <- colorRampPalette(
+  c(
+    "#f7fbff",
+    "#deebf7",
+    "#9ecae1",
+    "#3182bd",
+    "#08519c",
+    "#08306b"
+  )
+)(100)
+
+# Keep only finite values when determining the colour scale
+finite_snp_values <- as.numeric(snp_mat)
+finite_snp_values <- finite_snp_values[is.finite(finite_snp_values)]
+
+if (length(finite_snp_values) == 0) {
+  cat("*SNP matrix contains no finite values and cannot be plotted.*\n\n")
+} else {
+  snp_min <- min(finite_snp_values)
+  snp_max <- max(finite_snp_values)
+  constant_snp_matrix <- snp_min == snp_max
+
+  if (constant_snp_matrix) {
+    # pheatmap requires unique break values.
+    # Add a small interval around the single observed value.
+    heat_breaks <- seq(
+      from = snp_min - 0.5,
+      to = snp_max + 0.5,
+      length.out = length(color_func) + 1
     )
-    ggsave(.tmp_heat, plot = .ph_obj$gtable, width = px, height = px, dpi = 150, limitsize = FALSE)
-    .embed_img(.tmp_heat)
-    file.remove(.tmp_heat)
+
+    cluster_rows <- FALSE
+    cluster_cols <- FALSE
+    heat_treeheight_row <- 0
+    heat_treeheight_col <- 0
+  } else {
+    heat_breaks <- seq(
+      from = snp_min,
+      to = snp_max,
+      length.out = length(color_func) + 1
+    )
+
+    cluster_rows <- TRUE
+    cluster_cols <- TRUE
+    heat_treeheight_row <- 100
+    heat_treeheight_col <- 100
+  }
+
+  # Defensive check: pheatmap/cut requires strictly unique breaks
+  heat_breaks <- unique(heat_breaks)
+
+  if (length(heat_breaks) < 2) {
+    heat_breaks <- c(snp_min - 0.5, snp_max + 0.5)
+  }
+
+  .tmp_heat <- tempfile(fileext = ".png")
+
+  .ph_obj <- pheatmap(
+    snp_mat,
+    color = color_func,
+    breaks = heat_breaks,
+    cluster_rows = cluster_rows,
+    cluster_cols = cluster_cols,
+    clustering_distance_rows = as.dist(snp_mat),
+    clustering_distance_cols = as.dist(snp_mat),
+    clustering_method = "average",
+    display_numbers = TRUE,
+    number_format = "%d",
+    number_color = "black",
+    fontsize = fontsize_main,
+    fontsize_number = fontsize_num,
+    fontsize_row = fontsize_row,
+    annotation_row = ann_row,
+    annotation_colors = ann_colors,
+    legend = !constant_snp_matrix,
+    main = paste("Pairwise SNP distances —", query_id),
+    treeheight_row = heat_treeheight_row,
+    treeheight_col = heat_treeheight_col,
+    border_color = "#cccccc",
+    gaps_row = which(rownames(snp_mat) == query_lbl),
+    gaps_col = which(colnames(snp_mat) == query_lbl),
+    silent = TRUE
+  )
+
+  ggsave(
+    .tmp_heat,
+    plot = .ph_obj$gtable,
+    width = px,
+    height = px,
+    dpi = 150,
+    limitsize = FALSE
+  )
+
+  .embed_img(.tmp_heat)
+  file.remove(.tmp_heat)
+
+  if (constant_snp_matrix) {
+    cat(
+      sprintf(
+        "*All pairwise SNP distances are %s. Clustering was disabled because the matrix is constant.*\n\n",
+        snp_min
+      )
+    )
+  }
+}
     
     # Save SNP distance matrix as TSV for external analysis
     snp_tsv <- file.path(out_dir, "snp_matrices", paste0(query_id, "_snp_distances.tsv"))
@@ -2324,8 +2398,14 @@ if (length(batch_seqs_in_alignment) < 2) {
         for (j in (i + 1):n_batch) {
           s1 <- batch_seqs_mat[i, ]
           s2 <- batch_seqs_mat[j, ]
-          valid <- s1 != "-" & s2 != "-" & !is.na(s1) & !is.na(s2)
-          d <- sum(s1[valid] != s2[valid])
+          valid <- (
+  !is.na(s1) &
+  !is.na(s2) &
+  s1 != "-" &
+  s2 != "-"
+)
+
+d <- sum(s1[valid] != s2[valid])
           batch_snp_mat[i, j] <- batch_snp_mat[j, i] <- d
         }
       }
