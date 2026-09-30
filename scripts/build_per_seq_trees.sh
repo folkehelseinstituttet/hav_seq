@@ -50,7 +50,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEDUP_FA="$DATASET_DIR/$DATASET_DATE/blast_db/input_dedup.fa"
 BLAST_DB="$DATASET_DIR/$DATASET_DATE/blast_db/hav"
-METADATA_TSV="$DATASET_DIR/metadata.tsv"
+METADATA_TSV="$TMP_DIR/metadata.tsv"
 
 BATCH_NAME=$(basename "$BATCH_DIR")
 TREES_DIR="$OUT_BASE/trees"
@@ -148,8 +148,18 @@ if metadata_tsv != "NONE":
             seq_id = parts[id_col_idx]
             lineage = parts[lineage_col_idx].strip() or "unknown"
             lineage_map[seq_id] = lineage
-  except (FileNotFoundError, IndexError):
-    pass
+ except FileNotFoundError:
+    print(
+        f"ERROR: Metadata file not found: {metadata_tsv}",
+        file=sys.stderr
+    )
+    sys.exit(1)
+except IndexError as e:
+    print(
+        f"ERROR: Could not read metadata columns from {metadata_tsv}: {e}",
+        file=sys.stderr
+    )
+    sys.exit(1)
 
 # ── 1. BLAST hits grouped by lineage ──────────────────────────────────────────
 # Keep global BLAST ordering by SNP mismatch first (nearest), then bitscore.
