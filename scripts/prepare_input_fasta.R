@@ -46,6 +46,11 @@ if (!grepl("\\.fasta$", output_fa)) {
   }
 }
 
+if (file.exists(output_fa) && file.info(output_fa)$size > 0) {
+  message("Output FASTA already exists and is non-empty: ", output_fa)
+  quit(save = "no", status = 0)
+}
+
 # ── Validate FASTA directory ──────────────────────────────────────────────────
 if (!dir.exists(fasta_dir)) {
   stop("FASTA directory not found: ", fasta_dir, call. = FALSE)
@@ -80,22 +85,10 @@ read_sample_seq <- function(sample_name, input_dir) {
   # First token only in FASTA headers (tools truncate at whitespace)
   clean_name <- str_replace(sample_name, "\\s+.*$", "")
 
-  # Look for files matching sample name: .TXT > .fasta > .fa
-  txt_files   <- list.files(input_dir, pattern = paste0("^", sample_name, ".*\\.TXT$"),
-                            full.names = TRUE, ignore.case = FALSE)
-  fasta_files <- list.files(input_dir, pattern = paste0("^", sample_name, ".*\\.(fa|fasta)$"),
+  # Look for files matching sample name:  .fa
+  fasta_files <- list.files(input_dir, pattern = paste0("^", sample_name, ".*\\.fa$"),
                             full.names = TRUE, ignore.case = TRUE)
-
-  if (length(txt_files) > 0) {
-    raw <- readLines(txt_files[[1]])
-    seq <- paste(str_remove_all(raw, "\\s+"), collapse = "")
-    if (nchar(seq) == 0) {
-      stop("Empty sequence in TXT file for sample '", sample_name, "'",
-           call. = FALSE)
-    }
-    return(list(name = clean_name, seq = seq))
-  }
-
+ 
   if (length(fasta_files) > 0) {
     seqs <- read.fasta(fasta_files[[1]], seqtype = "DNA",
                        as.string = TRUE, forceDNAtolower = FALSE)
@@ -107,7 +100,7 @@ read_sample_seq <- function(sample_name, input_dir) {
     return(list(name = clean_name, seq = as.character(seqs[[1]])))
   }
 
-  stop("No .fa, .fasta, or .TXT file found for sample '",
+  stop("No .fa, file found for sample '",
        sample_name, "' in: ", input_dir, call. = FALSE)
 }
 
