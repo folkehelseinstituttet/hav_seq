@@ -115,51 +115,62 @@ blast_only_out = sys.argv[7] if len(sys.argv) > 7 else None
 # the first word of the full sequence name.  Match on that prefix.
 blast_query_id = query_id.split()[0]
 
-# ── Load metadata to map sseqid → lineage ──────────────────────────────────────
+# ── Load metadata to map sseqid → lineage ────────────────────────────────────
 lineage_map = {}  # sseqid → lineage
+
 if metadata_tsv != "NONE":
-  try:
-    # Some local metadata files may contain non-UTF8 bytes (e.g. Windows-encoded
-    # Norwegian characters). Decode permissively so neighbor selection does not fail.
-    with open(metadata_tsv, encoding="utf-8", errors="replace") as f:
-      header = f.readline().rstrip("\n").split("\t")
+    try:
+        # Decode permissively in case metadata contains Windows-encoded
+        # Norwegian characters.
+        with open(metadata_tsv, encoding="utf-8", errors="replace") as f:
+            header = f.readline().rstrip("\n").split("\t")
 
-      id_col_idx = 0
-      for id_col_name in ["id", "accession", "seqName", "name"]:
-        if id_col_name in header:
-          id_col_idx = header.index(id_col_name)
-          break
+            id_col_idx = 0
+            for id_col_name in ["id", "accession", "seqName", "name"\]:
+                if id_col_name in header:
+                    id_col_idx = header.index(id_col_name)
+                    break
 
-      # Find lineage column (try 'lineage', 'community_lineage', 'variant', etc.)
-      lineage_col_idx = None
-      for col_name in ["lineage", "community_lineage", "lineage_phylo", "variant", "genotype"]:
-        if col_name in header:
-          lineage_col_idx = header.index(col_name)
-          break
+            lineage_col_idx = None
+            for col_name in [
+                "lineage",
+                "community_lineage",
+                "lineage_phylo",
+                "variant",
+                "genotype",
+            \]:
+                if col_name in header:
+                    lineage_col_idx = header.index(col_name)
+                    break
 
-      if lineage_col_idx is None and len(header) > 1:
-        # Fallback: try second column if no named lineage column found
-        lineage_col_idx = 1
+            if lineage_col_idx is None and len(header) > 1:
+                lineage_col_idx = 1
 
-      if lineage_col_idx is not None:
-        for line in f:
-          parts = line.rstrip("\n").split("\t")
-          if len(parts) > max(id_col_idx, lineage_col_idx):
-            seq_id = parts[id_col_idx]
-            lineage = parts[lineage_col_idx].strip() or "unknown"
-            lineage_map[seq_id] = lineage
- except FileNotFoundError:
-    print(
-        f"ERROR: Metadata file not found: {metadata_tsv}",
-        file=sys.stderr
-    )
-    sys.exit(1)
-except IndexError as e:
-    print(
-        f"ERROR: Could not read metadata columns from {metadata_tsv}: {e}",
-        file=sys.stderr
-    )
-    sys.exit(1)
+            if lineage_col_idx is not None:
+                for line in f:
+                    parts = line.rstrip("\n").split("\t")
+
+                    if len(parts) > max(id_col_idx, lineage_col_idx):
+                        seq_id = parts[id_col_idx].strip()
+                        lineage = parts[lineage_col_idx].strip() or "unknown"
+
+                        if seq_id:
+                            lineage_map[seq_id] = lineage
+
+    except FileNotFoundError:
+        print(
+            f"ERROR: Metadata file not found: {metadata_tsv}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    except IndexError as e:
+        print(
+            f"ERROR: Could not read metadata columns from "
+            f"{metadata_tsv}: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 # ── 1. BLAST hits grouped by lineage ──────────────────────────────────────────
 # Keep global BLAST ordering by SNP mismatch first (nearest), then bitscore.
