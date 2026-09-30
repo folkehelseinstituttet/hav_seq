@@ -126,7 +126,7 @@ if metadata_tsv != "NONE":
             header = f.readline().rstrip("\n").split("\t")
 
             id_col_idx = 0
-            for id_col_name in ["id", "accession", "seqName", "name"\]:
+            for id_col_name in ["id", "accession", "seqName", "name"]:
                 if id_col_name in header:
                     id_col_idx = header.index(id_col_name)
                     break
@@ -138,7 +138,7 @@ if metadata_tsv != "NONE":
                 "lineage_phylo",
                 "variant",
                 "genotype",
-            \]:
+            ]:
                 if col_name in header:
                     lineage_col_idx = header.index(col_name)
                     break
