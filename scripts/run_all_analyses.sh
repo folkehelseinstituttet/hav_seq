@@ -330,7 +330,7 @@ rmarkdown::render(
     dataset_date = '$DATASET_DATE',
     n_neighbors  = 30,
     out_base     = '$OUT_BASE',
-    dataset_dir  = '$DATASET_DIR'
+    dataset_dir  = '$DATASET_DIR',
     final_output_dir = '$SMB_DIR'
   ),
   quiet = TRUE
