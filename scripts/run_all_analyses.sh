@@ -29,7 +29,7 @@
 #   1. BLAST     — batch sequences vs the local HAV BLAST database
 #                  (closest-match / genotype confirmation)
 #   2. NextClade — against the public-derived hav-vp1-2b-lineages dataset
-#                  (assigns genotype `clade` + lineage information)
+#                  (assigns genotype `clade` and QC metrics)
 #   3. Per-sequence trees — builds IQ-TREE phylogenetic trees for each query
 #                  (using nearest neighbors from BLAST and NextClade)
 #   4. Batch analysis — batch phylogenetic trees and SNP matrices
@@ -230,7 +230,7 @@ conda run -n BLAST bash $HAV_SEQ_REPO/scripts/blast_batch.sh "$ANALYSIS_FA" "$DA
 echo ""
 
 # ── Analysis 2: NextClade (lineages dataset) ──────────────────────────────────
-echo "▶ Step 2/6: NextClade — lineages dataset (clade + lineage_phylo)"
+echo "▶ Step 2/6: NextClade — clade assignment and QC"
 echo "─────────────────────────────────────────────────────────────────"
 echo "  Lineages dataset → $LINEAGES_DATASET"
 LINEAGES_OUT="$OUT_BASE/lineages"
@@ -325,7 +325,8 @@ rmarkdown::render(
   '$HAV_SEQ_REPO/scripts/batch_report.Rmd',
   output_file = '$REPORT_OUTPUT',
   params = list(
-    batch_dir    = '$BATCH_DIR',    
+    batch_dir    = '$BATCH_DIR',
+    batch_name   = '$BATCH_NAME',
     batch_fa     = '$BATCH_FA',    
     dataset_date = '$DATASET_DATE',
     n_neighbors  = 30,
