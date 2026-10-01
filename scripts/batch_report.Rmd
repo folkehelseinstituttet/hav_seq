@@ -11,6 +11,7 @@ output:
     self_contained: true
 params:
   batch_dir:    "data/Batch-1"
+  batch_name:   "Batch-1"
   batch_fa:     "data/Batch-1/Batch-1.fa"
   dataset_date: "2026-04-10"
   dataset_dir:  "data/local_dataset/2026-04-10"
@@ -23,6 +24,119 @@ params:
   min_called_fraction: 0.5
   entropy_window: 15
 ---
+
+```{r lightbox-setup, echo=FALSE, results='asis'}
+cat('
+<style>
+#tree-lightbox {
+  display: none;
+  position: fixed;
+  z-index: 9999;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.92);
+  cursor: zoom-out;
+  align-items: center;
+  justify-content: center;
+}
+
+#tree-lightbox.open {
+  display: flex;
+}
+
+#tree-lightbox-img {
+  display: block;
+  max-width: 95vw;
+  max-height: 95vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  background: white;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+}
+
+#tree-lightbox-close {
+  position: fixed;
+  top: 12px;
+  right: 22px;
+  z-index: 10000;
+  border: 0;
+  padding: 4px 10px;
+  color: white;
+  background: transparent;
+  font-size: 34px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tree-thumb {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-bottom: 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: zoom-in;
+  transition: opacity 0.15s ease;
+}
+
+.tree-thumb:hover {
+  opacity: 0.88;
+}
+</style>
+
+<div id="tree-lightbox"
+     role="dialog"
+     aria-modal="true"
+     aria-label="Enlarged phylogenetic tree"
+     onclick="closeTreeLightbox(event)">
+  <button id="tree-lightbox-close"
+          type="button"
+          aria-label="Close enlarged tree"
+          onclick="closeTreeLightbox(event)">
+    &times;
+  </button>
+  <img id="tree-lightbox-img"
+       alt="Enlarged phylogenetic tree"
+       onclick="event.stopPropagation();">
+</div>
+
+<script>
+function openTreeLightbox(src, altText) {
+  var lightbox = document.getElementById("tree-lightbox");
+  var image = document.getElementById("tree-lightbox-img");
+
+  image.src = src;
+  image.alt = altText || "Enlarged phylogenetic tree";
+  lightbox.classList.add("open");
+  document.body.style.overflow = "hidden";
+}
+
+function closeTreeLightbox(event) {
+  if (event) {
+    event.stopPropagation();
+  }
+
+  var lightbox = document.getElementById("tree-lightbox");
+  var image = document.getElementById("tree-lightbox-img");
+
+  lightbox.classList.remove("open");
+  image.src = "";
+  document.body.style.overflow = "";
+}
+
+document.addEventListener("keydown", function(event) {
+  if (event.key === "Escape") {
+    closeTreeLightbox();
+  }
+});
+</script>
+')
+```
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -44,16 +158,17 @@ suppressPackageStartupMessages({
   library(jsonlite)
   library(pheatmap)
   library(grid)
+  library(htmltools)
 })
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 proj_dir     <- normalizePath(file.path(dirname(knitr::current_input(dir = TRUE)), ".."),
                               mustWork = FALSE)
-#batch_dir    <- file.path(proj_dir, params$batch_dir)
 batch_dir    <- file.path(params$batch_dir)
-#out_dir      <- file.path(batch_dir, "output")
+
 out_dir      <- file.path(params$out_base)
 trees_dir    <- file.path(out_dir, "trees")
+
 # Permanent directory for figures generated while rendering the report
 report_figures_dir <- file.path(out_dir, "report_figures")
 dir.create(
@@ -65,7 +180,7 @@ showWarnings = FALSE
 dataset_base <- file.path(params$dataset_dir)
 dataset_root <- dirname(dataset_base)
 metadata_tsv <- file.path(dataset_root, "metadata.tsv")
-batch_name   <- basename(params$batch_dir)
+batch_name   <- params$batch_name
 input_fasta  <- file.path(params$batch_fa)
 
 # ── Helper: safe read_tsv ────────────────────────────────────────────────────
@@ -78,6 +193,45 @@ safe_csv_sc <- function(path, ...) {
   # NextClade CSV uses semicolons
   if (!file.exists(path)) return(tibble())
   read_delim(path, delim = ";", show_col_types = FALSE, ...)
+}
+
+.embed_tree <- function(path, alt = "Phylogenetic tree") {
+  if (!file.exists(path)) {
+    cat(sprintf(
+      "*(Tree image not found: %s)*\n\n",
+      basename(path)
+    ))
+    return(invisible(FALSE))
+  }
+
+  image_src <- knitr::image_uri(
+    normalizePath(path, mustWork = TRUE)
+  )
+
+  safe_alt <- htmltools::htmlEscape(
+    alt,
+    attribute = TRUE
+  )
+
+  cat(sprintf(
+    paste0(
+      '<img ',
+      'src="%s" ',
+      'class="tree-thumb" ',
+      'alt="%s" ',
+      'title="Click to enlarge" ',
+      'onclick="openTreeLightbox(this.src, this.alt);"',
+      '>\n\n'
+    ),
+    image_src,
+    safe_alt
+  ))
+
+  invisible(TRUE)
+}
+
+.embed_img <- function(path, alt = "Report figure") {
+  .embed_tree(path, alt = alt)
 }
 
 # Safe FASTA reader with validation (prevents ape::read.dna segfault)
@@ -135,21 +289,21 @@ if (params$dataset_date == "2026-04-10" && nrow(meta) > 0 && "id" %in% names(met
 }
 
 # Community sequence metadata from hav-vp1-2b-lineages tree.json
-# Provides clade_membership + lineage_phylo for NCBI accessions used as neighbors
+# Provides clade_membership for NCBI accessions used as neighbors
 .ltree_json <- file.path(proj_dir, "data", "nextclade_datasets",
                          "hav-vp1-2b-lineages", "tree.json")
-community_meta <- tibble(id = character(),
-                         community_clade = character(),
-                         community_lineage_phylo = character())
+community_meta <- tibble(
+  id = character(),
+  community_clade = character()
+)
 if (file.exists(.ltree_json)) {
   .ltree <- fromJSON(.ltree_json, simplifyDataFrame = FALSE)
   .cl_leaves <- function(node) {
     if (is.null(node$children) || length(node$children) == 0) {
       na <- node$node_attrs %||% list()
       list(tibble(
-        id                      = node$name %||% NA_character_,
-        community_clade         = na$clade_membership$value %||% NA_character_,
-        community_lineage_phylo = na$lineage_phylo$value    %||% NA_character_
+        id              = node$name %||% NA_character_,
+        community_clade = na$clade_membership$value %||% NA_character_
       ))
     } else {
       unlist(lapply(node$children, .cl_leaves), recursive = FALSE)
@@ -159,9 +313,7 @@ if (file.exists(.ltree_json)) {
     mutate(
       community_clade         = str_to_upper(community_clade),
       community_clade         = if_else(is.na(community_clade) | community_clade %in% c("", "UNASSIGNED"),
-                                        NA_character_, community_clade),
-      community_lineage_phylo = if_else(is.na(community_lineage_phylo) | community_lineage_phylo %in% c("", "unassigned"),
-                                        NA_character_, community_lineage_phylo)
+                                        NA_character_, community_clade)
     )
   if (params$dataset_date == "2026-04-10") {
     community_meta <- community_meta %>% filter(as.character(id) != "534954")
@@ -275,7 +427,7 @@ genotype_from_name <- function(x) {
   ifelse(is.na(roman), NA_character_, paste0(roman, str_to_upper(m[, 3])))
 }
 
-# NextClade — lineages dataset (clade + lineage_phylo)
+# NextClade clade assignments and QC results
 nc_lineages_raw <- safe_tsv(file.path(out_dir, "lineages", "nextclade.tsv"))
 
 # ── Check for NextClade alignment failures ──────────────────────────────────
@@ -295,14 +447,10 @@ if (nrow(nc_lineages_raw) > 0 && "errors" %in% names(nc_lineages_raw)) {
 
 nc_lineages <- nc_lineages_raw
 if (nrow(nc_lineages) > 0) {
-  if (!"lineage_phylo" %in% names(nc_lineages)) {
-    nc_lineages <- nc_lineages %>% mutate(lineage_phylo = NA_character_)
-  }
   nc_lineages <- nc_lineages %>%
     select(
       seqName,
       clade,
-      lineage_phylo,
       totalSubstitutions,
       coverage,
       qc_status = qc.overallStatus,
@@ -315,7 +463,7 @@ if (nrow(nc_lineages) > 0) {
     mutate(coverage = as.numeric(coverage))
 } else {
   nc_lineages <- tibble(
-    seqName = character(), clade = character(), lineage_phylo = character(),
+    seqName = character(), clade = character(),
     totalSubstitutions = integer(), coverage = double(), qc_status = character(),
     qc_score = double(), substitutions = character(), aaSubstitutions = character(),
     privateNucMuts_total = integer()
@@ -781,23 +929,21 @@ if (junction_is_usable) {
   junction_ids <- rownames(junction_aln)
 
   junction_order <- summary_tbl %>%
-    select(seqName, clade, lineage_phylo, qc_status) %>%
+    select(seqName, clade, qc_status) %>%
     mutate(
       clade_rank = dplyr::coalesce(clade, "ZZZ"),
-      lineage_rank = dplyr::coalesce(lineage_phylo, "ZZZ"),
       qc_rank = dplyr::coalesce(qc_status, "ZZZ")
     ) %>%
-    arrange(clade_rank, lineage_rank, qc_rank, seqName) %>%
+    arrange(clade_rank, qc_rank, seqName) %>%
     pull(seqName)
 
   junction_order <- unique(c(junction_order[junction_order %in% junction_ids], junction_ids))
 
   junction_labels <- summary_tbl %>%
-    select(seqName, clade, lineage_phylo) %>%
+    select(seqName, clade) %>%
     mutate(
       clade = if_else(is.na(clade) | clade == "", "?", clade),
-      lineage_phylo = if_else(is.na(lineage_phylo) | lineage_phylo == "", "?", lineage_phylo),
-      label = paste0(seqName, " [", clade, "/", lineage_phylo, "]")
+      label = paste0(seqName, " [", clade, "]")
     ) %>%
     select(seqName, label)
 
@@ -938,12 +1084,6 @@ input_overview <- if (nrow(input_seq_summary) > 0) {
 } else {
   tibble(metric = "Input FASTA", value = "Not found")
 }
-
-# Ensure lineage_phylo column exists
-if (!"lineage_phylo" %in% names(summary_tbl)) summary_tbl$lineage_phylo <- NA_character_
-
-# Is lineage assigned (not a NODE_ placeholder)?
-is_lineage <- function(x) !is.na(x) & !str_starts(x, "NODE_")
 
 summary_tbl <- summary_tbl %>%
   mutate(
@@ -1098,7 +1238,7 @@ This report compares complementary HAV analyses run on **`r batch_name`**:
 
 | Analysis | Description |
 |---|---|
-| **NC-lineages** | NextClade with `hav-vp1-2b-lineages` dataset — assigns clade (IA/IB/IIA/IIIA) + sub-genotype `lineage_phylo` |
+| **NC-lineages** | NextClade with `hav-vp1-2b` dataset — assigns clade (IA/IB/IIA/IIIA) |
 | **BLAST** | BLAST against local Norwegian HAV sequence database |
 
 ---
@@ -1184,7 +1324,7 @@ triage_tbl %>%
 
 ## Placement tree (NextClade)
 
-```{r placement-tree, fig.width=11, fig.height=11}
+```{r placement-tree, results='asis'}
 .nwk_path <- file.path(out_dir, "lineages", "nextclade.nwk")
 .ptr <- if (file.exists(.nwk_path)) tryCatch(read.tree(.nwk_path), error = function(e) NULL) else NULL
 
@@ -1220,7 +1360,31 @@ if (is.null(.ptr)) {
     theme(legend.position = "right",
           plot.title = element_text(face = "bold"))
 
-  print(p_place)
+  placement_tree_png <- file.path(
+    report_figures_dir,
+    "placement_phylogenetic_tree.png"
+  )
+
+  ggsave(
+    filename = placement_tree_png,
+    plot = p_place,
+    width = 11,
+    height = 11,
+    dpi = 180,
+    limitsize = FALSE
+  )
+
+  if (!file.exists(placement_tree_png)) {
+    stop(
+      "Placement tree figure was not created: ",
+      placement_tree_png
+    )
+  }
+
+  .embed_tree(
+    placement_tree_png,
+    alt = "NextClade placement phylogenetic tree"
+  )
 }
 ```
 
@@ -1302,24 +1466,24 @@ if (has_amplicon && nrow(amplicon_long) > 0) {
     theme(legend.position = "bottom",
           panel.grid.major.x = element_blank())
 
-amplicon_coverage_png <- file.path(
-  report_figures_dir,
-  "amplicon_coverage.png"
-)
-ggsave(
-  filename = amplicon_coverage_png,
-  plot = p_amp,
-  width = 12,
-  height = 2.4 * ceiling(n_samples / 4) + 1,
-  dpi = 150,
-  limitsize = FALSE
-)
+  amplicon_coverage_png <- file.path(
+    report_figures_dir,
+    "amplicon_coverage.png"
+  )
+  ggsave(
+    filename = amplicon_coverage_png,
+    plot = p_amp,
+    width = 12,
+    height = 2.4 * ceiling(n_samples / 4) + 1,
+    dpi = 150,
+    limitsize = FALSE
+  )
 
-if (!file.exists(amplicon_coverage_png)) {
-  stop("Amplicon coverage figure was not created: ", amplicon_coverage_png)
-}
+  if (!file.exists(amplicon_coverage_png)) {
+    stop("Amplicon coverage figure was not created: ", amplicon_coverage_png)
+  }
 
-.embed_img(amplicon_coverage_png)
+  .embed_img(amplicon_coverage_png)
 
   # Mean coverage per amplicon across the batch (compact summary table)
   amp_mean <- amplicon_long %>%
@@ -1363,11 +1527,11 @@ if (!file.exists(amplicon_coverage_png)) {
 
 # 1. Per-sequence summary
 
-**NextClade (NC)** designates lineage assignments from the `hav-vp1-2b-lineages` dataset.
+**NextClade (NC)** designates clade assignments from the `hav-vp1-2b-lineages` dataset.
 
 ```{r summary-table}
 clade_comp <- summary_tbl %>%
-  select(seqName, clade, lineage_phylo, blast_genotype, blast_variant) %>%
+  select(seqName, clade, blast_genotype, blast_variant) %>%
   mutate(
     blast_vs_clade = case_when(
       is.na(blast_genotype) | is.na(clade) ~ "No BLAST hit",
@@ -1386,7 +1550,6 @@ summary_tbl %>%
     blast_mismatch = if_else(!is.na(blast_mismatch), as.character(blast_mismatch),        "—"),
     blast_qcovs    = if_else(!is.na(blast_qcovs),    paste0(blast_qcovs, "%"),           "—"),
     clade          = if_else(!is.na(clade),           clade,                               "—"),
-    lineage_phylo  = if_else(!is.na(lineage_phylo),   lineage_phylo,                       "—"),
     blast_variant  = if_else(!is.na(blast_variant),   blast_variant,                       "—"),
     blast_genotype = if_else(!is.na(blast_genotype),  blast_genotype,                      "—")
   ) %>%
@@ -1394,7 +1557,6 @@ summary_tbl %>%
   select(
     Sequence          = seqName,
     `NC Clade`        = clade,
-    `Lineage (phylo)` = lineage_phylo,
     `NC QC`           = qc_status,
     `BLAST genotype`  = blast_genotype,
     `BLAST top hit`   = sseqid,
@@ -1471,11 +1633,6 @@ if (nrow(blast_top) > 0) {
 
 # 4. Per-sequence details {.tabset}
 
-<div id="tree-lightbox" onclick="this.style.display='none'" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.92);z-index:9999;cursor:zoom-out;overflow:auto;display:none;align-items:center;justify-content:center;">
-  <img id="tree-lightbox-img" style="max-width:95vw;max-height:95vh;display:block;margin:auto;"/>
-  <div style="position:fixed;top:12px;right:20px;color:#fff;font-size:28px;cursor:pointer;" onclick="document.getElementById('tree-lightbox').style.display='none'">&times;</div>
-</div>
-
 ## {.unlisted .unnumbered}
 
 ```{r per-seq-details, results='asis'}
@@ -1496,10 +1653,6 @@ ref_meta <- meta %>%
       variant
     )
   )
-
-query_lp <- nc_lineages %>%
-  select(seqName, lineage_phylo) %>%
-  filter(!is.na(lineage_phylo), is_lineage(lineage_phylo))
 
 query_ids <- summary_tbl$seqName
 called    <- c("a", "c", "g", "t")
@@ -1567,36 +1720,6 @@ query_ids_normalized <- word(query_ids, 1)
     score  = score[chosen]
   ) %>%
     arrange(desc(score))
-}
-
-.embed_img <- function(path) {
-  if (!file.exists(path)) {
-    cat(
-      sprintf(
-        "*(Image file not found: %s)*\n\n",
-        basename(path)
-      )
-    )
-    return(invisible(FALSE))
-  }
-
-  image_src <- knitr::image_uri(
-    normalizePath(path, mustWork = TRUE)
-  )
-
-  cat(sprintf(
-    paste0(
-      '<img src="%s" ',
-      'onclick="document.getElementById(\'tree-lightbox-img\').src=this.src; ',
-      'var lb=document.getElementById(\'tree-lightrsor:zoom-in; ',
-      'border:1px solid #ddd; border-radius:4px; ',
-      'margin-bottom:12px;" ',
-      'title="Click to enlarge"/>\n\n'
-    ),
-    image_src
-  ))
-
-  invisible(TRUE)
 }
 
 treefile_exists <- sapply(query_ids_normalized, function(id) file.exists(file.path(trees_dir, id, "tree.treefile")))
@@ -1707,23 +1830,10 @@ tip_info <- tibble(id = tr$tip.label) %>%
     by = c("id" = "id_norm")
   ) %>%
   left_join(
-    query_lp %>%
-      dplyr::rename(
-        id = seqName,
-        lineage_phylo_q = lineage_phylo
-      ),
-    by = "id"
-  ) %>%
-  left_join(
     community_meta,
     by = "id"
   ) %>%
   mutate(
-    lineage_phylo = coalesce(
-      lineage_phylo_q,
-      community_lineage_phylo
-    ),
-
     genotype = coalesce(
       genotype,
       community_clade
@@ -1733,21 +1843,6 @@ tip_info <- tibble(id = tr$tip.label) %>%
 
     tip_label = case_when(
       !is.na(genotype) &
-        !is.na(variant) &
-        !is.na(lineage_phylo) ~
-        paste0(
-          id, "  [", genotype, "  ", variant,
-          "  /  ", lineage_phylo, "]"
-        ),
-
-      !is.na(genotype) &
-        !is.na(lineage_phylo) ~
-        paste0(
-          id, "  [", genotype,
-          "  /  ", lineage_phylo, "]"
-        ),
-
-      !is.na(genotype) &
         !is.na(variant) ~
         paste0(
           id, "  [", genotype,
@@ -1756,16 +1851,6 @@ tip_info <- tibble(id = tr$tip.label) %>%
 
       !is.na(genotype) ~
         paste0(id, "  [", genotype, "]"),
-
-      !is.na(variant) &
-        !is.na(lineage_phylo) ~
-        paste0(
-          id, "  [", variant,
-          "  /  ", lineage_phylo, "]"
-        ),
-
-      !is.na(lineage_phylo) ~
-        paste0(id, "  [", lineage_phylo, "]"),
 
       !is.na(variant) ~
         paste0(id, "  [", variant, "]"),
@@ -1833,7 +1918,19 @@ tip_info <- tibble(id = tr$tip.label) %>%
       # Persist to output/trees/<seqName>/tree.png (not a tempfile) so it survives after report generation
       tree_png_path <- file.path(tree_dir, "tree.png")
       ggsave(tree_png_path, plot = p, width = 18, height = 9, dpi = 150)
-      .embed_img(tree_png_path)
+
+      if (!file.exists(tree_png_path)) {
+        stop(
+          "Per-sequence tree figure was not created: ",
+          tree_png_path
+        )
+      }
+
+      .embed_tree(
+        tree_png_path,
+        alt = paste("Phylogenetic tree for", query_id)
+      )
+
       if (use_cladogram_view) {
         cat("*Display note:* Large branch-length outliers detected. Tree is shown as a topology-only cladogram for readability; branch lengths are still preserved in `tree.treefile`.\n\n")
       }
@@ -1844,12 +1941,11 @@ meta_tbl <- tip_info %>%
   select(
     ID = id,
     Variant = variant,
-    Lineage_phylo = lineage_phylo,
     Genotype = genotype
   ) %>%
   mutate(
     across(
-      c(Variant, Lineage_phylo, Genotype),
+      c(Variant, Genotype),
       ~ if_else(
         is.na(.x) | .x %in% c("NA", ""),
         "—",
@@ -1922,11 +2018,8 @@ meta_tbl <- tip_info %>%
       left_join(ref_meta_hm, by = "id") %>%
       left_join(community_meta, by = "id") %>%
       mutate(
-        lineage_phylo = community_lineage_phylo,
-        variant       = hm_variant,
-        genotype      = coalesce(harmonise_genotype(hm_genotype), community_clade),  # Use same as lineage for genotype field
-        lineage_phylo = if_else(is.na(lineage_phylo) | lineage_phylo == "",
-                                NA_character_, lineage_phylo),
+        variant  = hm_variant,
+        genotype = coalesce(harmonise_genotype(hm_genotype), community_clade),
         # Shorten long FASTA headers: extract accession + isolate/strain name
         # Handles both "isolate XXXX" and "strain: XXXX" formats
         # E.g., "KX151409.1 Hepatovirus A isolate h737 ..." → "KX151409.1 (h737)"
@@ -1947,21 +2040,6 @@ meta_tbl <- tip_info %>%
     paste0(short_id, "  \u2605"),
 
   !is.na(genotype) &
-    !is.na(variant) &
-    !is.na(lineage_phylo) ~
-    paste0(
-      short_id, "  [", genotype, "  ",
-      variant, "  /  ", lineage_phylo, "]"
-    ),
-
-  !is.na(genotype) &
-    !is.na(lineage_phylo) ~
-    paste0(
-      short_id, "  [", genotype,
-      "  /  ", lineage_phylo, "]"
-    ),
-
-  !is.na(genotype) &
     !is.na(variant) ~
     paste0(
       short_id, "  [", genotype,
@@ -1971,18 +2049,8 @@ meta_tbl <- tip_info %>%
   !is.na(genotype) ~
     paste0(short_id, "  [", genotype, "]"),
 
-  !is.na(variant) &
-    !is.na(lineage_phylo) ~
-    paste0(
-      short_id, "  [", variant,
-      "  /  ", lineage_phylo, "]"
-    ),
-
   !is.na(variant) ~
     paste0(short_id, "  [", variant, "]"),
-
-  !is.na(lineage_phylo) ~
-    paste0(short_id, "  [", lineage_phylo, "]"),
 
   TRUE ~ short_id
 )
@@ -2375,16 +2443,15 @@ if (length(batch_seqs_in_alignment) < 2) {
     
     # Metadata for batch tips
     batch_tip_info <- tibble(id = batch_tree_obj$tip.label) %>%
-      left_join(summary_tbl %>% select(seqName, clade, lineage_phylo, blast_variant) %>% 
+      left_join(summary_tbl %>% select(seqName, clade, blast_variant) %>%
                 mutate(id = word(seqName, 1)) %>%
-                select(id, clade, lineage_phylo, blast_variant),
+                select(id, clade, blast_variant),
                 by = "id") %>%
       mutate(
         is_query = id %in% batch_seqs_in_alignment,
         tip_label = case_when(
-          !is.na(clade) & !is.na(lineage_phylo) & !is.na(blast_variant) ~ paste0(id, "  [", clade, " / ", lineage_phylo, " / ", blast_variant, "]"),
+            !is.na(clade) & !is.na(blast_variant) ~ paste0(id, "  [", clade, " / ", blast_variant, "]"),
           !is.na(clade) ~ paste0(id, "  [", clade, "]"),
-          !is.na(lineage_phylo) ~ paste0(id, "  [", lineage_phylo, "]"),
           TRUE ~ id
         )
       )
@@ -2418,7 +2485,13 @@ if (!file.exists(batch_tree_png)) {
   stop("Batch phylogenetic tree figure was not created: ", batch_tree_png)
 }
 
-.embed_img(batch_tree_png)
+.embed_tree(
+  batch_tree_png,
+  alt = paste(
+    "Batch phylogenetic tree for",
+    batch_name
+  )
+)
   } # end batch tree visualization
   
   cat("## Batch SNP distance heatmap\n\n")
@@ -2596,7 +2669,13 @@ if (!file.exists(batch_heatmap_png)) {
   stop("Batch SNP heatmap was not created: ", batch_heatmap_png)
 }
 
-.embed_img(batch_heatmap_png)
+.embed_img(
+  batch_heatmap_png,
+  alt = paste(
+    "Batch SNP distance heatmap for",
+    batch_name
+  )
+)
 
 
   if (batch_constant) {
@@ -2627,27 +2706,34 @@ if (!file.exists(batch_heatmap_png)) {
 # 7. Outbreak detection
 
 ```{r outbreak-detection, results='asis'}
-# ── Helper function for displaying images with lightbox ───────────────────────
-.embed_img <- function(path) {
-  if (!file.exists(path)) {
-    cat(sprintf("*(Image file not found: %s)*\n", basename(path)))
-    return()
-  }
-  cat(sprintf(
-    '<img src="%s" onclick="document.getElementById(\'tree-lightbox-img\').src=this.src; var lb=document.getElementById(\'tree-lightbox\'); lb.style.display=\'flex\';" style="width:100%%; cursor:zoom-in; border:1px solid #ddd; border-radius:4px; margin-bottom:12px;" title="Click to enlarge"/>\n',
-    knitr::image_uri(path)
-  ))
-}
 
 # Load BLAST results to identify which variants batch sequences match
 # Variants come from database variant assignments
-blast_data <- read_tsv(
-  file.path(params$out_base, "blast_results.tsv"),
-  col_names = c("qseqid", "sseqid", "pident", "length", "mismatch", "gapopen",
-                "qstart", "qend", "sstart", "send", "evalue", "bitscore"),
-  col_types = "ccddddiiiidd",
-  show_col_types = FALSE
-)
+blast_path <- file.path(params$out_base, "blast_results.tsv")
+blast_data <- if (file.exists(blast_path)) {
+  read_tsv(
+    blast_path,
+    col_names = c("qseqid", "sseqid", "pident", "length", "mismatch", "gapopen",
+                  "qstart", "qend", "sstart", "send", "evalue", "bitscore"),
+    col_types = "ccddddiiiidd",
+    show_col_types = FALSE
+  )
+} else {
+  tibble(
+    qseqid = character(),
+    sseqid = character(),
+    pident = numeric(),
+    length = numeric(),
+    mismatch = numeric(),
+    gapopen = numeric(),
+    qstart = integer(),
+    qend = integer(),
+    sstart = integer(),
+    send = integer(),
+    evalue = numeric(),
+    bitscore = numeric()
+  )
+}
 
 # Define robust ID normalization
 norm_id <- function(x) {
@@ -2663,7 +2749,7 @@ extract_base_variant <- function(variant) {
 
 # Identify batch variants:
 # For each batch sequence, get best BLAST hit (first row, sorted by score)
-# Then look up the variant/lineage from database metadata
+# Then look up the variant from database metadata
 # Group by BASE variant (removing sub-variant suffixes like a/b/c)
 batch_variants <- blast_data %>%
   arrange(
@@ -2831,7 +2917,13 @@ if (nrow(outbreak_candidates) == 0) {
                     n_batch_seqs, n_db_seqs, n_batch_seqs + n_db_seqs))
         
         # Embed pre-generated PNG image
-        .embed_img(png_path)
+        .embed_tree(
+  png_path,
+  alt = paste(
+    "Outbreak phylogenetic tree for variant",
+    variant_name
+  )
+)
         cat("\n\n")
         
         # Show database sequences with this variant
@@ -2904,12 +2996,10 @@ if (nrow(db_seqs_for_variant) > 0) {
 
 ```{r conclusions}
 n_seqs        <- nrow(summary_tbl)
-n_lp          <- sum(is_lineage(summary_tbl$lineage_phylo), na.rm = TRUE)
 n_blast_agree <- sum(summary_tbl$clade_agree_blast == TRUE, na.rm = TRUE)
 ```
 
 - **`r n_seqs`** sequences analyzed.
-- **Lineage resolution:** `r n_lp`/`r n_seqs` sequences assigned a `lineage_phylo` by the lineages dataset.
 - **BLAST vs clade agreement:** `r n_blast_agree`/`r sum(!is.na(summary_tbl$clade_agree_blast))` sequences where genotype is available.
 
 ---
@@ -2937,7 +3027,7 @@ tibble(
   ),
   Description = c(
     "BLAST hits vs local HAV database",
-    "NextClade: lineages dataset (clade + lineage_phylo)",
+    "NextClade: clade assignment and QC results",
     "IQ-TREE ML tree per query sequence",
     "Rendered phylogenetic tree image (PNG) per query sequence",
     "MAFFT alignment (query + BLAST hits + NextClade community sequences)",
@@ -2969,6 +3059,87 @@ clade_comp_out <- clade_comp %>%
 write_tsv(clade_comp_out, file.path(params$out_base, "comparison.tsv"))
 ```
 
+```{r collect-figures-alignments}
+# ── Collect per-sequence phylogenetic tree images ─────────────────────────────
+# Copy all tree.png files from output/trees/<seqName>/ to report_figures/
+seq_tree_pngs <- list.files(
+  trees_dir,
+  pattern = "tree\\.png$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+if (length(seq_tree_pngs) > 0) {
+  for (png_path in seq_tree_pngs) {
+    seq_name <- basename(dirname(png_path))
+    dest <- file.path(report_figures_dir, paste0(seq_name, "_tree.png"))
+    file.copy(png_path, dest, overwrite = TRUE)
+  }
+}
+
+# ── Collect outbreak phylogenetic tree images ──────────────────────────────────
+# Copy all .png files from output/outbreak_trees/ to report_figures/
+outbreak_trees_dir <- file.path(params$out_base, "outbreak_trees")
+if (dir.exists(outbreak_trees_dir)) {
+  outbreak_pngs <- list.files(
+    outbreak_trees_dir,
+    pattern = "\\.png$",
+    full.names = TRUE
+  )
+  if (length(outbreak_pngs) > 0) {
+    for (png_path in outbreak_pngs) {
+      file.copy(png_path, file.path(report_figures_dir, basename(png_path)), overwrite = TRUE)
+    }
+  }
+}
+
+# ── Collect alignment FASTA files ──────────────────────────────────────────────
+# Create alignments folder and copy all .fasta files
+alignments_dir <- file.path(params$out_base, "alignments")
+dir.create(alignments_dir, showWarnings = FALSE, recursive = TRUE)
+
+# NextClade junction alignment
+nextclade_aln <- file.path(out_dir, "lineages", "nextclade.aligned.fasta")
+if (file.exists(nextclade_aln)) {
+  file.copy(nextclade_aln, file.path(alignments_dir, "nextclade_junction.fasta"), overwrite = TRUE)
+}
+
+# Per-sequence alignments from trees
+seq_alns <- list.files(
+  trees_dir,
+  pattern = "\\.(aligned_trimmed\\.fasta|fasta)$|aligned_trimmed_blast_only\\.fa$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+if (length(seq_alns) > 0) {
+  for (aln_path in seq_alns) {
+    seq_name <- basename(dirname(aln_path))
+    fname <- basename(aln_path)
+    dest <- file.path(alignments_dir, paste0(seq_name, "_", fname))
+    file.copy(aln_path, dest, overwrite = TRUE)
+  }
+}
+
+# Batch alignment
+batch_aln <- file.path(trees_dir, "batch", "batch.aligned.fasta")
+if (file.exists(batch_aln)) {
+  file.copy(batch_aln, file.path(alignments_dir, "batch_alignment.fasta"), overwrite = TRUE)
+}
+
+# Outbreak alignments
+if (dir.exists(outbreak_trees_dir)) {
+  outbreak_fastas <- list.files(
+    outbreak_trees_dir,
+    pattern = "\\.fasta$",
+    full.names = TRUE
+  )
+  if (length(outbreak_fastas) > 0) {
+    for (fasta_path in outbreak_fastas) {
+      file.copy(fasta_path, file.path(alignments_dir, basename(fasta_path)), overwrite = TRUE)
+    }
+  }
+}
+```
+
 *Summary written to `r file.path(params$final_output_dir, "summary.tsv")`*  
 *Comparison written to `r file.path(params$final_output_dir, "comparison.tsv")`*
 
@@ -2976,4 +3147,4 @@ write_tsv(clade_comp_out, file.path(params$out_base, "comparison.tsv"))
 
 *Report generated: `r Sys.time()`*  
 *Batch: `r batch_name`*  
-*Dataset: `r params$dataset_date`*  
+*Dataset used: `r paste0("2PA_pre_", params$dataset_date, ".fa")`*
