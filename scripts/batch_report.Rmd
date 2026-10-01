@@ -280,9 +280,22 @@ norm_id <- function(x) {
 # Reference metadata
 meta <- safe_tsv(metadata_tsv)
 
-#if (nrow(meta) > 0 && "date" %in% names(meta)) {
-#  meta <- meta %>% mutate(date = as.character(date))
-#}
+if (nrow(meta) > 0) {
+
+  chr_cols <- names(meta)[sapply(meta, is.character)]
+
+  meta[chr_cols] <- lapply(
+    meta[chr_cols],
+    function(x)
+      iconv(
+        x,
+        from = "",
+        to = "UTF-8",
+        sub = ""
+      )
+  )
+
+}
 
 if (params$dataset_date == "2026-04-10" && nrow(meta) > 0 && "id" %in% names(meta)) {
   meta <- meta %>% filter(as.character(id) != "534954")
@@ -2744,8 +2757,19 @@ norm_id <- function(x) {
 
 # Extract base variant (remove trailing a/b/c/d suffixes)
 extract_base_variant <- function(variant) {
-  ifelse(is.na(variant), NA_character_, sub("[a-z]$", "", variant))
+
+  variant <- iconv(
+    as.character(variant),
+    from = "",
+    to = "UTF-8",
+    sub = ""
+  )
+
+  variant[variant == ""] <- NA_character_
+
+  stringr::str_remove(variant, "[a-z]$")
 }
+
 
 # Identify batch variants:
 # For each batch sequence, get best BLAST hit (first row, sorted by score)
@@ -2808,6 +2832,7 @@ batch_variant_summary <- batch_variants %>%
 
 # Add database counts for context
 if (nrow(meta) > 0 && "variant" %in% names(meta)) {
+  
   db_variant_summary <- meta %>%
     filter(
       !is.na(variant),
