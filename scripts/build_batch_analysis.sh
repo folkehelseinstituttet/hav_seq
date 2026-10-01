@@ -241,53 +241,138 @@ echo "Batch tree saved: $BATCH_TREES/tree.treefile"
 echo ""
 echo "Step 4: Computing SNP distance matrix..."
 
-# Use R to compute pairwise SNP distances
-conda run -n R_shared Rscript - "$BATCH_ALIGN_ALIGNED" "$BATCH_SNP" << 'EOF'
+SNP_OUTPUT="$BATCH_SNP/batch_snp_distances.tsv"
+SNP_R_SCRIPT="$BATCH_TREES/compute_batch_snp_distances.R"
+
+rm -f "$SNP_OUTPUT"
+
+cat > "$SNP_R_SCRIPT" <<'RSCRIPT'
 args <- commandArgs(trailingOnly = TRUE)
-align_file <- args[1]
-output_dir <- args[2]
 
-library(ape)
-
-# Read alignment
-aln <- tryCatch({
-    read.dna(align_file, format = "fasta", as.character = TRUE)
-}, error = function(e) {
-    cat("ERROR reading alignment:", e$message, "\n")
-    NULL
-})
-
-if (is.null(aln) || nrow(aln) < 2) {
-    cat("ERROR: Alignment must have at least 2 sequences\n")
-    q(save = "no", status = 1)
+if (length(args) != 2) {
+    stop(
+        "Expected 2 arguments: <alignment_file> <output_file>. Got: ",
+        length(args)
+    )
 }
 
-# Compute pairwise SNP distances
+align_file <- args[1]
+output_file <- args[2]
+
+cat("Alignment file:", align_file, "\n")
+cat("Output file:", output_file, "\n")
+
+if (!file.exists(align_file)) {
+    stop("Alignment file does not exist: ", align_file)
+}
+
+if (!requireNamespace("ape", quietly = TRUE)) {
+    stop("The R package 'ape' is not installed in the R_shared environment")
+}
+
+aln <- ape::read.dna(
+    align_file,
+    format = "fasta",
+    as.character = TRUE
+)
+
+if (is.null(dim(aln)) || nrow(aln) < 2) {
+    stop(
+        "Alignment must contain at least 2 sequences. Number found: ",
+        ifelse(is.null(dim(aln)), 0, nrow(aln))
+    )
+}
+
 n_seqs <- nrow(aln)
 seq_ids <- rownames(aln)
-snp_mat <- matrix(0L, n_seqs, n_seqs, dimnames = list(seq_ids, seq_ids))
 
-for (i in 1:(n_seqs-1)) {
-    for (j in (i+1):n_seqs) {
+if (is.null(seq_ids) || any(seq_ids == "")) {
+    stop("One or more sequences are missing FASTA identifiers")
+}
+
+snp_mat <- matrix(
+    0L,
+    nrow = n_seqs,
+    ncol = n_seqs,
+    dimnames = list(seq_ids, seq_ids)
+)
+
+for (i in seq_len(n_seqs - 1L)) {
+    for (j in seq.int(i + 1L, n_seqs)) {
         s1 <- aln[i, ]
         s2 <- aln[j, ]
-        valid <- s1 != "-" & s2 != "-" & !is.na(s1) & !is.na(s2)
-        d <- sum(s1[valid] != s2[valid])
-        snp_mat[i, j] <- snp_mat[j, i] <- d
+
+        valid <- (
+            !is.na(s1) &
+            !is.na(s2) &
+            s1 != "-" &
+            s2 != "-" &
+            s1 != "n" &
+            s2 != "n" &
+            s1 != "?" &
+            s2 != "?"
+        )
+
+        snp_distance <- sum(s1[valid] != s2[valid])
+
+        snp_mat[i, j] <- snp_distance
+        snp_mat[j, i] <- snp_distance
     }
 }
 
-# Save as TSV
-output_file <- file.path(output_dir, "batch_snp_distances.tsv")
-write.table(snp_mat, file = output_file, sep = "\t", quote = FALSE)
-cat("SNP distance matrix saved:", output_file, "\n")
-EOF
+dir.create(
+    dirname(output_file),
+    recursive = TRUE,
+    showWarnings = FALSE
+)
 
-if [[ ! -f "$BATCH_SNP/batch_snp_distances.tsv" ]]; then
-    echo "WARNING: SNP distance matrix computation failed or was skipped"
-else
-    echo "SNP distance matrix computed successfully"
+write.table(
+    snp_mat,
+    file = output_file,
+    sep = "\t",
+    quote = FALSE,
+    col.names = NA
+)
+
+if (!file.exists(output_file)) {
+    stop("Output file was not created: ", output_file)
+}
+
+cat(
+    "SNP distance matrix saved:",
+    output_file,
+    "\n"
+)
+RSCRIPT
+
+echo "R executable:"
+conda run -n R_shared which Rscript
+
+echo "Checking ape package:"
+conda run -n R_shared Rscript -e \
+    'cat("ape installed:", requireNamespace("ape", quietly = TRUE), "\n")'
+
+if ! conda run \
+    --no-capture-output \
+    -n R_shared \
+    Rscript "$SNP_R_SCRIPT" "$BATCH_ALIGN_ALIGNED" "$SNP_OUTPUT"
+then
+    echo "ERROR: SNP distance matrix computation failed"
+    echo "Alignment: $BATCH_ALIGN_ALIGNED"
+    echo "Expected output: $SNP_OUTPUT"
+    exit 1
 fi
+
+if [[ ! -s "$SNP_OUTPUT" ]]; then
+    echo "ERROR: SNP distance matrix was not created or is empty:"
+    echo "       $SNP_OUTPUT"
+    exit 1
+fi
+
+echo "SNP distance matrix computed successfully:"
+echo "  $SNP_OUTPUT"
+
+rm -f "$SNP_R_SCRIPT"
 
 # ────────────────────────────────────────────────────────────────────────────
 # Completion
