@@ -1256,35 +1256,31 @@ This report compares complementary HAV analyses run on **`r batch_name`**:
 
 ---
 
-# Batch overview {.tabset}
+# 1. Batch overview {.tabset}
 
-## Verdict table
+## Verdict table (with scrolling)
 
 ```{r triage-table}
-.flag_col <- c(Clear = "#2ca02c", Review = "#d62728", `No call` = "#7f7f7f")
-.flag_ord <- c("Review", "No call", "Clear")
-
 triage_tbl %>%
-  arrange(factor(flag, levels = .flag_ord), seqName) %>%
+  arrange(seqName) %>%
   transmute(
     `LabWareID`     = if_else(!is.na(LabWareID), LabWareID, "—"),
     `SequenceID`    = if_else(!is.na(SekvensID), SekvensID, "—"),
     `Genotype (NC)` = if_else(!is.na(clade), clade, "—"),
     `Genotype (BLAST)` = if_else(!is.na(blast_genotype), blast_genotype, "—"),
-    `Agree`         = case_when(is.na(clade_agree_blast) ~ "—",
-                                clade_agree_blast ~ "✓", TRUE ~ "✗"),
     `BLAST top hit` = if_else(!is.na(sseqid), sseqid, "—"),
     `BLAST variant` = if_else(!is.na(blast_variant), blast_variant, "—"),
     `BLAST SNPs`    = if_else(!is.na(blast_mismatch), as.character(blast_mismatch), "—"),
     `DB variant count` = if_else(!is.na(db_variant_count), as.character(db_variant_count), "—"),
     `Similar BLAST variant` = if_else(similar_variants_msg != "", similar_variants_msg, "—"),
     `Input length`  = if_else(!is.na(input_length), as.character(input_length), "—"),
-    `Called %`      = if_else(!is.na(called_frac), percent(called_frac, 1), "—"),
-    `Flag`          = cell_spec(flag, color = "white", background = .flag_col[flag], bold = TRUE),
-    `Notes`         = flag_reason
+    `Ambiguous`     = if_else(!is.na(ambiguous_count), as.character(ambiguous_count), "—"),
+    .clade = clade,
+    .blast_genotype = blast_genotype,
+    .clade_agree_blast = clade_agree_blast
   ) -> .triage_display
 
-# Calculate background colors for BLAST SNPs column (same as Per-sequence summary)
+# Calculate background colors for BLAST SNPs column
 .snp_colors <- .triage_display$`BLAST SNPs` %>%
   map_chr(~ {
     if (. == "—") {
@@ -1316,21 +1312,54 @@ triage_tbl %>%
     }
   })
 
+# Calculate background colors for Genotype (NC) and Genotype (BLAST) if they don't match
+.genotype_nc_colors <- map2_chr(.triage_display$.clade, .triage_display$.clade_agree_blast, ~ {
+  if (!is.na(.y) && !.y) {
+    "#ffcccb"  # Light red for disagreement
+  } else {
+    ""
+  }
+})
+
+.genotype_blast_colors <- map2_chr(.triage_display$.blast_genotype, .triage_display$.clade_agree_blast, ~ {
+  if (!is.na(.y) && !.y) {
+    "#ffcccb"  # Light red for disagreement
+  } else {
+    ""
+  }
+})
+
 .triage_display %>%
+  select(-starts_with(".")) %>%
   kbl(escape = FALSE,
       table.attr = 'style="width: auto;"',
-      caption = "Batch overview — sorted with items needing review first. Green = clear, red = genotype disagreement, grey = no NextClade call (usually low coverage). Called % = percentage of sequence bases that are unambiguous (A/C/G/T; excludes N and other ambiguous codes). DB variant count = number of sequences in reference database with same BLAST variant.") %>%
+      caption = "Batch overview — sorted by sequence name. Red background on Genotype columns indicates disagreement between NextClade (NC) and BLAST genotype assignments. DB variant count = number of sequences in reference database with same BLAST variant.") %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE) %>%
   column_spec(1, width = "10em", extra_css = "white-space: nowrap;") %>%  # LabWareID
   column_spec(2, width = "12em", extra_css = "white-space: nowrap;") %>%  # SequenceID
-  column_spec(3, width = "10em", extra_css = "white-space: nowrap;") %>%  # Genotype (NC)
-  column_spec(4, width = "12em", extra_css = "white-space: nowrap;") %>%  # Genotype (BLAST)
-  column_spec(6, width = "14em", extra_css = "white-space: nowrap;") %>%  # BLAST top hit
-  column_spec(7, width = "16em", extra_css = "white-space: nowrap;") %>%  # BLAST variant
-  column_spec(8, background = .snp_colors, bold = TRUE) %>%  # Color code BLAST SNPs
-  column_spec(10, width = "20em", extra_css = "min-width: 18em; white-space: normal; line-height: 1.2; word-break: break-word;") %>%  # Similar BLAST variant
-  column_spec(11, background = .input_length_colors) %>%  # Color code Input length
+  column_spec(3, width = "10em", background = .genotype_nc_colors, extra_css = "white-space: nowrap;") %>%  # Genotype (NC)
+  column_spec(4, width = "12em", background = .genotype_blast_colors, extra_css = "white-space: nowrap;") %>%  # Genotype (BLAST)
+  column_spec(5, width = "14em", extra_css = "white-space: nowrap;") %>%  # BLAST top hit
+  column_spec(6, width = "16em", extra_css = "white-space: nowrap;") %>%  # BLAST variant
+  column_spec(7, background = .snp_colors, bold = TRUE) %>%  # Color code BLAST SNPs
+  column_spec(9, width = "20em", extra_css = "min-width: 18em; white-space: normal; line-height: 1.2; word-break: break-word;") %>%  # Similar BLAST variant
+  column_spec(10, background = .input_length_colors) %>%  # Color code Input length
   scroll_box(width = "100%")
+```
+
+## Verdict table (without scrolling)
+
+```{r triage-table-compact}
+.triage_display %>%
+  select(-starts_with(".")) %>%
+  kbl(escape = FALSE,
+      table.attr = 'style="width: auto;"',
+      caption = "Batch overview (compact view without scrolling) — same data as above. Red background on Genotype columns indicates disagreement between NextClade and BLAST.") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
+  column_spec(3, background = .genotype_nc_colors) %>%  # Genotype (NC)
+  column_spec(4, background = .genotype_blast_colors) %>%  # Genotype (BLAST)
+  column_spec(7, background = .snp_colors, bold = TRUE) %>%  # Color code BLAST SNPs
+  column_spec(10, background = .input_length_colors)  # Color code Input length
 ```
 
 `r {n_clear <- sum(triage_tbl$flag=="Clear"); n_rev <- sum(triage_tbl$flag=="Review"); n_no <- sum(triage_tbl$flag=="No call"); sprintf("**%d clear · %d to review · %d no call** of %d samples.", n_clear, n_rev, n_no, nrow(triage_tbl))}`
@@ -1403,211 +1432,7 @@ if (is.null(.ptr)) {
 
 ---
 
-# 0. Input sequence summary
-
-## Per-sequence input QC
-
-```{r input-per-seq}
-if (nrow(input_seq_summary) > 0) {
-  input_seq_summary %>%
-    transmute(
-      Sequence = seqName,
-      Length = length,
-      Ambiguous = ambiguous_count
-    ) %>%
-    kbl() %>%
-    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE)
-} else {
-  cat("Input FASTA not found:", input_fasta)
-}
-```
-
----
-
-```{r amplicon-coverage, results='asis', fig.width=12}
-if (has_amplicon && nrow(amplicon_long) > 0) {
-  cat("# Amplicon coverage (whole-genome / ViroConstrictor) {.tabset}\n\n")
-
-  # ── Tab 1: coverage barplot, one bar per amplicon, faceted per sample ───────
-  cat("## Coverage barplot\n\n")
-
-  .mincov <- if (!is.na(mincov_val)) mincov_val else 20
-
-  # Per-sample genotype (NextClade clade) for the facet headers + grid ordering.
-  .geno_lookup <- triage_tbl %>%
-    transmute(sample = word(seqName, 1),
-              geno   = harmonise_genotype(clade)) %>%
-    distinct(sample, .keep_all = TRUE)
-
-  amp_plot <- amplicon_long %>%
-    left_join(.geno_lookup, by = "sample") %>%
-    mutate(
-      geno     = if_else(is.na(geno), "—", geno),
-      passes   = coverage >= .mincov,
-      cov_plot = pmax(coverage, 0.5),       # floor so zeros are visible on log scale
-      facet_label = paste0(sample, " · ", geno)
-    )
-
-  # Order facets by genotype (no-call last), then sample, so same-genotype
-  # samples sit together in the grid.
-  .facet_levels <- amp_plot %>%
-    distinct(sample, geno, facet_label) %>%
-    arrange(geno == "—", geno, sample) %>%
-    pull(facet_label)
-  amp_plot <- amp_plot %>%
-    mutate(facet_label = factor(facet_label, levels = .facet_levels))
-
-  n_samples <- dplyr::n_distinct(amp_plot$sample)
-  p_amp <- ggplot(amp_plot, aes(x = factor(amplicon), y = cov_plot, fill = passes)) +
-    geom_col() +
-    geom_hline(yintercept = .mincov, linetype = "dashed", colour = "grey40", linewidth = 0.3) +
-    facet_wrap(~ facet_label, ncol = 4) +
-    scale_y_log10(labels = scales::label_number()) +
-    scale_fill_manual(
-      values = c(`TRUE` = "#2ca02c", `FALSE` = "#d62728"),
-      labels = c(`TRUE` = paste0("≥ MinCov (", .mincov, "×)"),
-                 `FALSE` = paste0("< MinCov (", .mincov, "×)")),
-      name = NULL, drop = FALSE
-    ) +
-    labs(
-      x = "Amplicon", y = "Mean coverage (×, log scale)",
-      title = "Per-amplicon mean coverage by sample",
-      subtitle = paste0("Dashed line = MinCov threshold (", .mincov,
-                        "×). Bars below it (red) failed the consensus depth filter.")
-    ) +
-    theme_bw(base_size = 11) +
-    theme(legend.position = "bottom",
-          panel.grid.major.x = element_blank())
-
-  amplicon_coverage_png <- file.path(
-    report_figures_dir,
-    "amplicon_coverage.png"
-  )
-  ggsave(
-    filename = amplicon_coverage_png,
-    plot = p_amp,
-    width = 12,
-    height = 2.4 * ceiling(n_samples / 4) + 1,
-    dpi = 150,
-    limitsize = FALSE
-  )
-
-  if (!file.exists(amplicon_coverage_png)) {
-    stop("Amplicon coverage figure was not created: ", amplicon_coverage_png)
-  }
-
-  .embed_img(amplicon_coverage_png)
-
-  # Mean coverage per amplicon across the batch (compact summary table)
-  amp_mean <- amplicon_long %>%
-    group_by(Amplicon = amplicon) %>%
-    summarise(
-      `Mean coverage (×)`   = round(mean(coverage, na.rm = TRUE), 1),
-      `Median coverage (×)` = round(median(coverage, na.rm = TRUE), 1),
-      `Samples ≥ MinCov`    = sum(coverage >= .mincov, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    mutate(`Samples ≥ MinCov` = paste0(`Samples ≥ MinCov`, " / ", n_samples))
-  cat(kbl(amp_mean, caption = "Per-amplicon coverage across the batch") %>%
-        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
-                      full_width = FALSE) %>%
-        as.character())
-  cat("\n\n")
-
-  # ── Tab 2: primer scheme table (primer name ↔ amplicon number) ──────────────
-  cat("## Primer scheme\n\n")
-  if (nrow(primer_scheme_tbl) > 0) {
-    .ptbl <- primer_scheme_tbl %>%
-      select(Scheme = scheme, Amplicon = amplicon,
-             `Left primer`            = any_of("primer_LEFT"),
-             `Left primer (original)` = any_of("original_LEFT"),
-             `Left sequence`          = any_of("sequence_LEFT"),
-             `Right primer`            = any_of("primer_RIGHT"),
-             `Right primer (original)` = any_of("original_RIGHT"),
-             `Right sequence`          = any_of("sequence_RIGHT"))
-    cat(kbl(.ptbl, caption = "Primer scheme: primer names (ViroConstrictor & original) and sequences per amplicon") %>%
-          kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
-                        full_width = FALSE) %>%
-          as.character())
-    cat("\n\n")
-  } else {
-    cat("*Primer scheme FASTA referenced by the samplesheet could not be read.*\n\n")
-  }
-
-  cat("---\n\n")
-}
-```
-
-# 1. Per-sequence summary
-
-**NextClade (NC)** designates clade assignments from the `hav-vp1-2b-lineages` dataset.
-
-```{r summary-table}
-clade_comp <- summary_tbl %>%
-  select(seqName, clade, blast_genotype, blast_variant) %>%
-  mutate(
-    blast_vs_clade = case_when(
-      is.na(blast_genotype) | is.na(clade) ~ "No BLAST hit",
-      str_detect(
-        str_to_upper(clade),
-        str_remove(str_to_upper(replace_na(blast_genotype, "")), "[Aa]$|[Bb]$")
-      ) ~ "Agreement",
-      TRUE ~ "DISCORDANT"
-    )
-  )
-
-summary_tbl %>%
-  mutate(
-    coverage       = if_else(!is.na(coverage) & is.numeric(coverage), percent(coverage, 0.1), "—"),
-    blast_pident   = if_else(!is.na(blast_pident),   paste0(round(blast_pident, 1), "%"), "—"),
-    blast_mismatch = if_else(!is.na(blast_mismatch), as.character(blast_mismatch),        "—"),
-    blast_qcovs    = if_else(!is.na(blast_qcovs),    paste0(blast_qcovs, "%"),           "—"),
-    clade          = if_else(!is.na(clade),           clade,                               "—"),
-    blast_variant  = if_else(!is.na(blast_variant),   blast_variant,                       "—"),
-    blast_genotype = if_else(!is.na(blast_genotype),  blast_genotype,                      "—")
-  ) %>%
-  left_join(clade_comp %>% select(seqName, blast_vs_clade), by = "seqName") %>%
-  select(
-    Sequence          = seqName,
-    `NC Clade`        = clade,
-    `NC QC`           = qc_status,
-    `BLAST genotype`  = blast_genotype,
-    `BLAST top hit`   = sseqid,
-    `BLAST %id`       = blast_pident,
-    `BLAST SNPs`      = blast_mismatch,
-    `BLAST qcov%`     = blast_qcovs,
-    `BLAST variant`   = blast_variant
-  ) -> summary_display
-
-# Calculate background colors for BLAST SNPs column
-snp_colors <- summary_display$`BLAST SNPs` %>%
-  map_chr(~ {
-    if (. == "—") {
-      ""  # Empty string for no background
-    } else {
-      snp_count <- as.numeric(.)
-      if (snp_count == 0) {
-        "#c8e6c9"  # Light green for 0 SNPs
-      } else if (snp_count <= 2) {
-        "#fff9c4"  # Light yellow for 1-2 SNPs
-      } else {
-        ""  # Empty string for no background
-      }
-    }
-  })
-
-summary_display %>%
-  kbl(escape = FALSE) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
-  column_spec(2, bold = TRUE) %>%
-  column_spec(3, bold = TRUE, color = "#1a6bb5") %>%
-  column_spec(5, bold = TRUE) %>%
-  column_spec(8, bold = TRUE, background = snp_colors)
-```
-
----
-
-# 2. BLAST analysis detail {.tabset}
+# 5. BLAST analysis detail {.tabset}
 
 ## Top hits per sequence
 
@@ -1644,7 +1469,7 @@ if (nrow(blast_top) > 0) {
 ```
 ---
 
-# 4. Per-sequence details {.tabset}
+# 6. Per-sequence details {.tabset}
 
 ## {.unlisted .unnumbered}
 
@@ -2228,7 +2053,7 @@ heatmap_png <- file.path(
 ```
 ---
 
-# 5. Variant naming
+# 3. Variant naming
 
 ```{r variant-naming, results='asis'}
 # Extract year from dataset_date parameter (format: YYYY-MM-DD)
@@ -2399,7 +2224,7 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
 
 ---
 
-# 6. Batch QC
+# 2. Batch QC
 
 ```{r batch-qc, results='asis'}
 # Get batch sample names (first token, trimmed)
@@ -2716,7 +2541,7 @@ if (!file.exists(batch_heatmap_png)) {
 
 ---
 
-# 7. Outbreak detection
+# 4. Outbreak detection
 
 ```{r outbreak-detection, results='asis'}
 
@@ -3017,7 +2842,7 @@ if (nrow(db_seqs_for_variant) > 0) {
 
 ---
 
-# 8. Conclusions and recommendations
+# 7. Conclusions and recommendations
 
 ```{r conclusions}
 n_seqs        <- nrow(summary_tbl)
@@ -3029,7 +2854,7 @@ n_blast_agree <- sum(summary_tbl$clade_agree_blast == TRUE, na.rm = TRUE)
 
 ---
 
-# 9. Output files
+# 8. Output files
 
 ```{r output-files}
 tibble(
@@ -3073,9 +2898,59 @@ tibble(
   kable_styling(bootstrap_options = c("striped", "condensed"), full_width = TRUE)
 ```
 
-```{r write-outputs}
+```{r write-outputs, include=FALSE}
+# ── Prepare summary.tsv with expanded columns and new order ──────────────────
+# Expand summary_tbl with input sequence metrics and samplesheet info
+summary_tsv_output <- summary_tbl %>%
+  # Add input sequence length and ambiguous base count
+  left_join(
+    input_seq_summary %>% 
+      select(seqName, input_length = length, ambiguous_count),
+    by = "seqName"
+  ) %>%
+  # Add LabWareID and SequenceID from samplesheet
+  left_join(
+    .ss_sample_info %>% 
+      select(Sample, LabWareID, SequenceID = SekvensID),
+    by = c("seqName" = "Sample")
+  ) %>%
+  # Add database variant count for the top BLAST hit
+  left_join(
+    .blast_variant_counts,
+    by = "blast_variant"
+  ) %>%
+  # Extract LabWareID and SequenceID from seqName if not in samplesheet
+  mutate(
+    LabWareID = if_else(!is.na(LabWareID), LabWareID, word(seqName, 1)),
+    SequenceID = if_else(!is.na(SequenceID), SequenceID, word(seqName, 2))
+  ) %>%
+  # Select and order columns according to user specification
+  select(
+    LabWareID,
+    SequenceID,
+    Genotype_NC = clade,
+    Genotype_BLAST = blast_genotype,
+    Clade_agree_blast = clade_agree_blast,
+    BLAST_top_hit = sseqid,
+    BLAST_variant = blast_variant,
+    BLAST_SNPs = blast_mismatch,
+    DB_variant_count = db_variant_count,
+    Similar_BLAST_variant = similar_variants,
+    Input_length = input_length,
+    Ambiguous = ambiguous_count,
+    BLAST_pident = blast_pident,
+    BLAST_qcov = blast_qcovs,
+    BLAST_bitscore = blast_bitscore,
+    NC_qc_status = qc_status,
+    NC_qc_score = qc_score,
+    substitutions,
+    aaSubstitutions,
+    privateNucMuts_total,
+    totalSubstitutions
+  )
+
 # Write summary TSV
-write_tsv(summary_tbl, file.path(params$out_base, "summary.tsv"))
+write_tsv(summary_tsv_output, file.path(params$out_base, "summary.tsv"))
 
 # Write comparison TSV
 clade_comp_out <- clade_comp %>%
@@ -3084,7 +2959,7 @@ clade_comp_out <- clade_comp %>%
 write_tsv(clade_comp_out, file.path(params$out_base, "comparison.tsv"))
 ```
 
-```{r collect-figures-alignments}
+```{r collect-figures-alignments, include=FALSE}
 # ── Collect per-sequence phylogenetic tree images ─────────────────────────────
 # Copy all tree.png files from output/trees/<seqName>/ to report_figures/
 seq_tree_pngs <- list.files(
