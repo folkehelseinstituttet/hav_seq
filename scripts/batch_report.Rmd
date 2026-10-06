@@ -1127,12 +1127,20 @@ if (file.exists(.ss_path)) {
     distinct()
 }
 
-# ── Add input sequence length to summary ─────────────────────────────────────
-.seq_lengths <- if (nrow(input_seq_summary) > 0) {
+# ── Add input sequence metrics to summary ─────────────────────────────────────
+.input_metrics <- if (nrow(input_seq_summary) > 0) {
   input_seq_summary %>%
-    transmute(seqName, input_length = length)
+    transmute(
+      seqName,
+      input_length = length,
+      ambiguous_count
+    )
 } else {
-  tibble(seqName = character(), input_length = integer())
+  tibble(
+    seqName = character(),
+    input_length = integer(),
+    ambiguous_count = integer()
+  )
 }
 
 # ── Count BLAST database occurrences per variant and find similar variants ────
@@ -1214,7 +1222,7 @@ if (file.exists(.ss_path)) {
 triage_tbl <- summary_tbl %>%
   mutate(join_key = word(seqName, 1)) %>%
   left_join(.called, by = "join_key") %>%
-  left_join(.seq_lengths, by = "seqName") %>%
+  left_join(.input_metrics, by = "seqName") %>%
   left_join(.ss_sample_info, by = c("seqName" = "Sample")) %>%
   left_join(.blast_variant_counts, by = "blast_variant") %>%
   left_join(.db_variant_summary$similar, 
