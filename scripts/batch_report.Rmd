@@ -2908,31 +2908,66 @@ tibble(
 
 ```{r write-outputs, include=FALSE}
 # ── Prepare summary.tsv with expanded columns and new order ──────────────────
-# Expand summary_tbl with input sequence metrics and samplesheet info
+
 summary_tsv_output <- summary_tbl %>%
-  # Add input sequence length and ambiguous base count
+
+  # Add input sequence metrics
   left_join(
-    input_seq_summary %>% 
-      select(seqName, input_length = length, ambiguous_count),
+    input_seq_summary %>%
+      select(
+        seqName,
+        input_length = length,
+        ambiguous_count
+      ),
     by = "seqName"
   ) %>%
+
   # Add LabWareID and SequenceID from samplesheet
   left_join(
-    .ss_sample_info %>% 
-      select(Sample, LabWareID, SequenceID = SekvensID),
+    .ss_sample_info %>%
+      select(
+        Sample,
+        LabWareID,
+        SequenceID = SekvensID
+      ),
     by = c("seqName" = "Sample")
   ) %>%
+
   # Add database variant count for the top BLAST hit
   left_join(
     .blast_variant_counts,
     by = "blast_variant"
   ) %>%
-  # Extract LabWareID and SequenceID from seqName if not in samplesheet
-  mutate(
-    LabWareID = if_else(!is.na(LabWareID), LabWareID, word(seqName, 1)),
-    SequenceID = if_else(!is.na(SequenceID), SequenceID, word(seqName, 2))
+
+  # Add variants with similar BLAST distance
+  left_join(
+    .db_variant_summary$similar,
+    by = c(
+      "qseqid" = "qseqid",
+      "sseqid" = "sseqid"
+    )
   ) %>%
-  # Select and order columns according to user specification
+
+  # Ensure the column always exists, including when no similar variants exist
+  mutate(
+    similar_variants = coalesce(
+      as.character(similar_variants),
+      ""
+    ),
+
+    LabWareID = if_else(
+      !is.na(LabWareID),
+      as.character(LabWareID),
+      word(seqName, 1)
+    ),
+
+    SequenceID = if_else(
+      !is.na(SequenceID),
+      as.character(SequenceID),
+      word(seqName, 2)
+    )
+  ) %>%
+
   select(
     LabWareID,
     SequenceID,
