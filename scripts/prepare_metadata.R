@@ -28,8 +28,11 @@ hav <- hav %>%
 metadata_requests <- requests %>%
   transmute(
     id = SAMPLE_NUMBER,
-    genotype = Resultat,
+    genotype = str_extract(Resultat, "(?<=HAV GENOTYPE\\s)\\S+"),
     variant = Outbreak_variant
+  ) %>%
+  mutate(
+    genotype = replace_na(genotype, "")
   )
 
 # Data fra TSV-filen
