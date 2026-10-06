@@ -216,7 +216,17 @@ log_msg("\n--- Assigning batch sequences to variants ---")
 # NOR-2024-V6a → NOR-2024-V6
 # NOR-2025-V8 → NOR-2025-V8 (no suffix)
 extract_base_variant <- function(variant) {
-  ifelse(is.na(variant), NA_character_, sub("[a-z]$", "", variant))
+  variant <- iconv(
+    as.character(variant),
+    from = "",
+    to = "UTF-8",
+    sub = ""
+  )
+
+  variant <- trimws(variant)
+  variant[is.na(variant) | variant == ""] <- NA_character_
+
+  sub("[a-z]$", "", variant, perl = TRUE)
 }
 
 # Assign each batch sequence to the base variant of its best BLAST match
