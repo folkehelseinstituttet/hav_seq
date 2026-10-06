@@ -2877,7 +2877,6 @@ tibble(
     file.path(params$final_output_dir, "outbreak_trees", "<Variant>.fasta"),
     file.path(params$final_output_dir, "outbreak_trees", "<Variant>.png"),
     file.path(params$final_output_dir, "summary.tsv"),
-    file.path(params$final_output_dir, "comparison.tsv"),
     file.path(params$final_output_dir, "report_figures", "amplicon_coverage.png"),
     file.path(params$final_output_dir, "report_figures", "batch_phylogenetic_tree.png"),
     file.path(params$final_output_dir, "report_figures", "batch_snp_heatmap.png"),
@@ -2893,8 +2892,7 @@ tibble(
     "Pairwise SNP distance matrix per query sequence (TSV format for external analysis)",
     "Outbreak phylogenetic alignment: batch sequences + database sequences for each variant (FASTA)",
     "Outbreak phylogenetic tree visualization (PNG) per HAV variant",
-    "Per-sequence summary table (this report, TSV)",
-    "Clade comparison table (this report, TSV)",
+    "Per-sequence summary table (this report, TSV) — includes all genotype and BLAST comparison data",
     "Report figure: amplicon coverage plot",
     "Report figure: batch phylogenetic tree",
     "Report figure: batch SNP heatmap",
@@ -2995,11 +2993,15 @@ summary_tsv_output <- summary_tbl %>%
 # Write summary TSV
 write_tsv(summary_tsv_output, file.path(params$out_base, "summary.tsv"))
 
-# Write comparison TSV
-clade_comp_out <- clade_comp %>%
-  left_join(summary_tbl %>% select(seqName, blast_mismatch = blast_mismatch,
-                                    blast_pident, blast_qcovs), by = "seqName")
-write_tsv(clade_comp_out, file.path(params$out_base, "comparison.tsv"))
+# NOTE: comparison.tsv was removed — summary.tsv now contains all comparison data
+# (Genotype_NC, Genotype_BLAST, Clade_agree_blast, etc.)
+# clade_comp object no longer exists after cleanup; summary.tsv replaces its functionality
+# 
+# # Write comparison TSV [OBSOLETE - data now in summary.tsv]
+# clade_comp_out <- clade_comp %>%
+#   left_join(summary_tbl %>% select(seqName, blast_mismatch = blast_mismatch,
+#                                     blast_pident, blast_qcovs), by = "seqName")
+# write_tsv(clade_comp_out, file.path(params$out_base, "comparison.tsv"))
 ```
 
 ```{r collect-figures-alignments, include=FALSE}
@@ -3083,8 +3085,7 @@ if (dir.exists(outbreak_trees_dir)) {
 }
 ```
 
-*Summary written to `r file.path(params$final_output_dir, "summary.tsv")`*  
-*Comparison written to `r file.path(params$final_output_dir, "comparison.tsv")`*
+*Summary written to `r file.path(params$final_output_dir, "summary.tsv")`*
 
 ---
 
