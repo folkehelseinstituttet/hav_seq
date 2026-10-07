@@ -1,20 +1,1268 @@
-﻿```{r setup, include=FALSE}
-# Load all required libraries at the start
+---
+title: "HAV Batch Analysis Report"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    df_print: paged
+    self_contained: true
+params:
+  batch_dir:    "data/Batch-1"
+  batch_name:   "Batch-1"
+  batch_fa:     "data/Batch-1/Batch-1.fa"
+  dataset_date: "2026-04-10"
+  dataset_dir:  "data/local_dataset/2026-04-10"
+  out_base:     "data/Batch-1/output"
+  final_output_dir: ""
+  n_neighbors:  30
+  mode:         "sanger"
+  zoom_count: 5
+  zoom_width: 35
+  min_called_fraction: 0.5
+  entropy_window: 15
+---
+
+```{r lightbox-setup, echo=FALSE, results='asis'}
+cat('
+<style>
+#tree-lightbox {
+  display: none;
+  position: fixed;
+  z-index: 9999;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.92);
+  cursor: zoom-out;
+  align-items: center;
+  justify-content: center;
+}
+
+#tree-lightbox.open {
+  display: flex;
+}
+
+#tree-lightbox-img {
+  display: block;
+  max-width: 95vw;
+  max-height: 95vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  background: white;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+}
+
+#tree-lightbox-close {
+  position: fixed;
+  top: 12px;
+  right: 22px;
+  z-index: 10000;
+  border: 0;
+  padding: 4px 10px;
+  color: white;
+  background: transparent;
+  font-size: 34px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tree-thumb {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-bottom: 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: zoom-in;
+  transition: opacity 0.15s ease;
+}
+
+.tree-thumb:hover {
+  opacity: 0.88;
+}
+</style>
+
+<div id="tree-lightbox"
+     role="dialog"
+     aria-modal="true"
+     aria-label="Enlarged phylogenetic tree"
+     onclick="closeTreeLightbox(event)">
+  <button id="tree-lightbox-close"
+          type="button"
+          aria-label="Close enlarged tree"
+          onclick="closeTreeLightbox(event)">
+    &times;
+  </button>
+  <img id="tree-lightbox-img"
+       alt="Enlarged phylogenetic tree"
+       onclick="event.stopPropagation();">
+</div>
+
+<script>
+function openTreeLightbox(src, altText) {
+  var lightbox = document.getElementById("tree-lightbox");
+  var image = document.getElementById("tree-lightbox-img");
+
+  image.src = src;
+  image.alt = altText || "Enlarged phylogenetic tree";
+  lightbox.classList.add("open");
+  document.body.style.overflow = "hidden";
+}
+
+function closeTreeLightbox(event) {
+  if (event) {
+    event.stopPropagation();
+  }
+
+  var lightbox = document.getElementById("tree-lightbox");
+  var image = document.getElementById("tree-lightbox-img");
+
+  lightbox.classList.remove("open");
+  image.src = "";
+  document.body.style.overflow = "";
+}
+
+document.addEventListener("keydown", function(event) {
+  if (event.key === "Escape") {
+    closeTreeLightbox();
+  }
+});
+</script>
+')
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 12,
+  fig.height = 7
+)
+
 suppressPackageStartupMessages({
-  library(tidyverse)      # includes dplyr, ggplot2, purrr, tidyr, etc.
-  library(knitr)
-  library(kableExtra)
-  library(ggtree)
-  library(pheatmap)
+  library(tidyverse)
   library(ape)
+  library(ggtree)
   library(phangorn)
+  library(kableExtra)
   library(scales)
-  library(stringr)
-  library(ggmsa)
+  library(patchwork)
+  library(jsonlite)
+  library(pheatmap)
+  library(grid)
+  library(htmltools)
 })
 
-knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+# ── Paths ────────────────────────────────────────────────────────────────────
+proj_dir     <- normalizePath(file.path(dirname(knitr::current_input(dir = TRUE)), ".."),
+                              mustWork = FALSE)
+batch_dir    <- file.path(params$batch_dir)
+
+out_dir      <- file.path(params$out_base)
+trees_dir    <- file.path(out_dir, "trees")
+
+# Permanent directory for figures generated while rendering the report
+report_figures_dir <- file.path(out_dir, "report_figures")
+dir.create(
+report_figures_dir,
+recursive = TRUE,
+showWarnings = FALSE
+)
+#dataset_base <- file.path(proj_dir, "data", "local_dataset", params$dataset_date)
+dataset_base <- file.path(params$dataset_dir)
+dataset_root <- dirname(dataset_base)
+metadata_tsv <- file.path(dataset_root, "metadata.tsv")
+batch_name   <- params$batch_name
+input_fasta  <- file.path(params$batch_fa)
+
+# ── Helper: safe read_tsv ────────────────────────────────────────────────────
+safe_tsv <- function(path, ...) {
+  if (!file.exists(path)) return(tibble())
+  read_tsv(path, show_col_types = FALSE, ...)
+}
+
+safe_csv_sc <- function(path, ...) {
+  # NextClade CSV uses semicolons
+  if (!file.exists(path)) return(tibble())
+  read_delim(path, delim = ";", show_col_types = FALSE, ...)
+}
+
+.embed_tree <- function(path, alt = "Phylogenetic tree") {
+  if (!file.exists(path)) {
+    cat(sprintf(
+      "*(Tree image not found: %s)*\n\n",
+      basename(path)
+    ))
+    return(invisible(FALSE))
+  }
+
+  image_src <- knitr::image_uri(
+    normalizePath(path, mustWork = TRUE)
+  )
+
+  safe_alt <- htmltools::htmlEscape(
+    alt,
+    attribute = TRUE
+  )
+
+  cat(sprintf(
+    paste0(
+      '<img ',
+      'src="%s" ',
+      'class="tree-thumb" ',
+      'alt="%s" ',
+      'title="Click to enlarge" ',
+      'onclick="openTreeLightbox(this.src, this.alt);"',
+      '>\n\n'
+    ),
+    image_src,
+    safe_alt
+  ))
+
+  invisible(TRUE)
+}
+
+.embed_img <- function(path, alt = "Report figure") {
+  .embed_tree(path, alt = alt)
+}
+
+# Safe FASTA reader with validation (prevents ape::read.dna segfault)
+safe_read_dna_fasta <- function(path) {
+  # Check file existence
+  if (!file.exists(path)) return(NULL)
+  
+  # Check file size (empty file would cause problems)
+  if (file.size(path) == 0) return(NULL)
+  
+  # Quick validation: first line should be a header starting with '>'
+  first_line <- readLines(path, n = 1)
+  if (length(first_line) == 0 || !grepl("^>", first_line)) {
+    warning("Invalid FASTA file (no valid header): ", path)
+    return(NULL)
+  }
+  
+  # Count sequences by counting '>' lines
+  all_lines <- readLines(path)
+  n_seqs <- sum(grepl("^>", all_lines))
+  if (n_seqs < 1) return(NULL)
+  
+  # Try to read with ape::read.dna, but catch errors
+  # (tryCatch won't catch segfaults, but at least we tried validation)
+  tryCatch({
+    ape::read.dna(path, format = "fasta", as.character = TRUE)
+  }, error = function(e) {
+    warning("Error reading FASTA file: ", path, " - ", e$message)
+    NULL
+  })
+}
+
+# Null-coalescing helper (used in parse_nearest)
+`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0) a else b
+
+# Normalize IDs to match FASTA headers: spaces → "_", non-ASCII stripped
+norm_id <- function(x) {
+  # Repair invalid byte sequences first (source TSVs are not always valid UTF-8)
+  x <- iconv(x, from = "UTF-8", to = "UTF-8", sub = "")
+  x <- gsub(" ", "_", x)
+  iconv(x, from = "UTF-8", to = "ASCII", sub = "")
+}
+
+# ── Load data ─────────────────────────────────────────────────────────────────
+
+# Reference metadata
+meta <- safe_tsv(metadata_tsv)
+
+if (nrow(meta) > 0) {
+
+  chr_cols <- names(meta)[sapply(meta, is.character)]
+
+  meta[chr_cols] <- lapply(
+    meta[chr_cols],
+    function(x)
+      iconv(
+        x,
+        from = "",
+        to = "UTF-8",
+        sub = ""
+      )
+  )
+
+}
+
+if (params$dataset_date == "2026-04-10" && nrow(meta) > 0 && "id" %in% names(meta)) {
+  meta <- meta %>% filter(as.character(id) != "534954")
+}
+
+# Community sequence metadata from hav-vp1-2b-lineages tree.json
+# Provides clade_membership for NCBI accessions used as neighbors
+.ltree_json <- file.path(proj_dir, "data", "nextclade_datasets",
+                         "hav-vp1-2b-lineages", "tree.json")
+community_meta <- tibble(
+  id = character(),
+  community_clade = character()
+)
+if (file.exists(.ltree_json)) {
+  .ltree <- fromJSON(.ltree_json, simplifyDataFrame = FALSE)
+  .cl_leaves <- function(node) {
+    if (is.null(node$children) || length(node$children) == 0) {
+      na <- node$node_attrs %||% list()
+      list(tibble(
+        id              = node$name %||% NA_character_,
+        community_clade = na$clade_membership$value %||% NA_character_
+      ))
+    } else {
+      unlist(lapply(node$children, .cl_leaves), recursive = FALSE)
+    }
+  }
+  community_meta <- bind_rows(.cl_leaves(.ltree$tree)) %>%
+    mutate(
+      community_clade         = str_to_upper(community_clade),
+      community_clade         = if_else(is.na(community_clade) | community_clade %in% c("", "UNASSIGNED"),
+                                        NA_character_, community_clade)
+    )
+  if (params$dataset_date == "2026-04-10") {
+    community_meta <- community_meta %>% filter(as.character(id) != "534954")
+  }
+  rm(.ltree, .cl_leaves)
+}
+rm(.ltree_json)
+
+# BLAST results
+blast_raw <- safe_tsv(file.path(out_dir, "blast_results.tsv"))
+if (params$dataset_date == "2026-04-10" && nrow(blast_raw) > 0 && "sseqid" %in% names(blast_raw)) {
+  blast_raw <- blast_raw %>% filter(as.character(sseqid) != "534954")
+}
+
+# ── Amplicon coverage + primer scheme (whole-genome / ViroConstrictor only) ───
+# ViroConstrictor writes one mean-coverage value per amplicon per sample to
+# all_amplicon_coverage.csv. Sanger batches have no such file, so the whole
+# amplicon section is skipped downstream when `has_amplicon` is FALSE.
+amplicon_cov_path <- file.path(batch_dir, "viroconstrictor", "results",
+                               "combined", "all_samples", "all_amplicon_coverage.csv")
+has_amplicon  <- file.exists(amplicon_cov_path)
+amplicon_long <- tibble()
+mincov_val    <- NA_real_
+
+if (has_amplicon) {
+  .ac <- readr::read_csv(amplicon_cov_path, show_col_types = FALSE)
+  # Columns: Virus, Reference_ID, amplicon_names (= sample name), then one
+  # column per amplicon (e.g. HAVIB_001 … HAVIB_006).
+  .amp_cols <- setdiff(names(.ac), c("Virus", "Reference_ID", "amplicon_names"))
+  if (length(.amp_cols) > 0) {
+    amplicon_long <- .ac %>%
+      rename(sample = amplicon_names) %>%
+      pivot_longer(all_of(.amp_cols), names_to = "amplicon_raw", values_to = "coverage") %>%
+      mutate(
+        sample   = word(as.character(sample), 1),
+        amplicon = as.integer(str_extract(amplicon_raw, "[0-9]+$")),
+        coverage = as.numeric(coverage)
+      ) %>%
+      arrange(sample, amplicon)
+  }
+}
+
+# Primer scheme table (primer name ↔ amplicon number) from the batch samplesheet
+primer_scheme_tbl <- tibble()
+.samplesheet_path <- file.path(batch_dir, "samplesheet.tsv")
+if (has_amplicon && file.exists(.samplesheet_path)) {
+  .ss <- safe_tsv(.samplesheet_path)
+  if ("MinCov" %in% names(.ss)) {
+    mincov_val <- suppressWarnings(as.numeric(.ss$MinCov[1]))
+  }
+  if ("Primers" %in% names(.ss)) {
+    .primer_rel   <- unique(.ss$Primers)
+    .primer_rel   <- .primer_rel[!is.na(.primer_rel) & .primer_rel != "NONE"]
+    .primer_paths <- file.path(proj_dir, .primer_rel)
+    .primer_paths <- .primer_paths[file.exists(.primer_paths)]
+    if (length(.primer_paths) > 0) {
+      # Read primer records (header + sequence) preserving file order.
+      .read_primer_fa <- function(p) {
+        ln  <- readLines(p, warn = FALSE)
+        hdr <- which(startsWith(ln, ">"))
+        tibble(primer   = sub("^>", "", ln[hdr]),
+               sequence = toupper(ln[pmin(hdr + 1L, length(ln))]))
+      }
+      .renamed_fa <- bind_rows(lapply(.primer_paths, .read_primer_fa))
+
+      # The original (pre-ViroConstrictor) primer names live in a sibling
+      # *_original.fasta with identical record order, so pair them positionally.
+      .orig_paths <- sub("_renamed\\.fasta$", "_original.fasta", .primer_paths)
+      .orig_paths <- .orig_paths[file.exists(.orig_paths)]
+      .renamed_fa$original <- NA_character_
+      if (length(.orig_paths) > 0) {
+        .orig_fa <- bind_rows(lapply(.orig_paths, .read_primer_fa))
+        if (nrow(.orig_fa) == nrow(.renamed_fa))
+          .renamed_fa$original <- .orig_fa$primer
+      }
+
+      # Primer names look like HAVIB_1_LEFT / HAVIB_1_RIGHT — scheme, amplicon, side.
+      primer_scheme_tbl <- .renamed_fa %>%
+        distinct(primer, .keep_all = TRUE) %>%
+        tidyr::extract(primer, c("scheme", "amplicon", "side"),
+                       "^(.*)_([0-9]+)_(LEFT|RIGHT)$", remove = FALSE) %>%
+        filter(!is.na(amplicon)) %>%
+        mutate(amplicon = as.integer(amplicon)) %>%
+        select(scheme, amplicon, side, primer, original, sequence) %>%
+        pivot_wider(names_from = side,
+                    values_from = c(primer, original, sequence)) %>%
+        arrange(scheme, amplicon)
+    }
+  }
+}
+
+# ── Genotype helpers ──────────────────────────────────────────────────────────
+# HAV genotypes are written in canonical roman form with an uppercase sub-letter
+# (IA, IB, IIA, IIIA). Two normalisations are needed:
+#   * harmonise_genotype()  — upper-case + trim any genotype label (Ib → IB).
+#   * genotype_from_name()  — derive a genotype from a reference name that
+#     encodes it in arabic form (e.g. "helgenom_gt_1a" → IA) for hits that carry
+#     no genotype in the metadata.
+.arabic_to_roman_gt <- c(`1` = "I", `2` = "II", `3` = "III",
+                         `4` = "IV", `5` = "V", `6` = "VI", `7` = "VII")
+
+harmonise_genotype <- function(x) {
+  x <- str_to_upper(str_trim(as.character(x)))
+  x[x %in% c("", "NA")] <- NA_character_
+  x
+}
+
+genotype_from_name <- function(x) {
+  m     <- str_match(str_to_lower(as.character(x)), "gt[_-]?([0-9]+)\\s*([a-z]?)")
+  roman <- .arabic_to_roman_gt[m[, 2]]
+  ifelse(is.na(roman), NA_character_, paste0(roman, str_to_upper(m[, 3])))
+}
+
+# NextClade clade assignments and QC results
+nc_lineages_raw <- safe_tsv(file.path(out_dir, "lineages", "nextclade.tsv"))
+
+# ── Check for NextClade alignment failures ──────────────────────────────────
+nc_errors <- tibble()
+if (nrow(nc_lineages_raw) > 0 && "errors" %in% names(nc_lineages_raw)) {
+  nc_errors <- nc_lineages_raw %>%
+    filter(!is.na(errors) & errors != "") %>%
+    select(seqName, errors)
+  if (nrow(nc_errors) > 0) {
+    warning(
+      "NextClade alignment failed for ", nrow(nc_errors), " sequence(s).\n",
+      "This usually means sequences are too short or don't match the reference dataset.\n",
+      "Try running with --min-match-length 10 or lower (default is 10)."
+    )
+  }
+}
+
+nc_lineages <- nc_lineages_raw
+if (nrow(nc_lineages) > 0) {
+  nc_lineages <- nc_lineages %>%
+    select(
+      seqName,
+      clade,
+      totalSubstitutions,
+      coverage,
+      qc_status = qc.overallStatus,
+      qc_score  = qc.overallScore,
+      substitutions,
+      aaSubstitutions,
+      privateNucMuts_total = privateNucMutations.totalPrivateSubstitutions
+    ) %>%
+    # Ensure coverage is numeric (NextClade may return FALSE for failed alignments)
+    mutate(coverage = as.numeric(coverage))
+} else {
+  nc_lineages <- tibble(
+    seqName = character(), clade = character(),
+    totalSubstitutions = integer(), coverage = double(), qc_status = character(),
+    qc_score = double(), substitutions = character(), aaSubstitutions = character(),
+    privateNucMuts_total = integer()
+  )
+}
+
+# Harmonise the NextClade clade label to canonical uppercase (IA, IB, IIIA …).
+if (nrow(nc_lineages) > 0) {
+  nc_lineages <- nc_lineages %>% mutate(clade = harmonise_genotype(clade))
+}
+
+# All query names (from NC-lineages)
+all_queries <- nc_lineages$seqName
+
+# Metadata for joining reference info to BLAST hits
+meta_base <- if (nrow(meta) > 0) {
+  meta %>%
+    transmute(
+      sseqid = as.character(id),
+      hit_genotype = as.character(genotype),
+      hit_variant = as.character(variant)
+    )
+} else {
+  tibble(
+    sseqid = character(),
+    hit_genotype = character(),
+    hit_variant = character()
+  )
+}
+
+# Only proceed with join if blast_raw has data and the required column exists
+blast_top <- if (nrow(blast_raw) > 0 && "sseqid" %in% names(blast_raw)) {
+  blast_raw %>%
+    left_join(meta_base, by = "sseqid") %>%
+    # Define "nearest BLAST hit" as lowest SNP mismatch first, then highest bitscore.
+    arrange(qseqid, mismatch, desc(bitscore)) %>%
+    group_by(qseqid) %>%
+    mutate(hit_rank = row_number()) %>%
+    ungroup()
+} else {
+  # Return empty tibble with expected structure if no BLAST results
+  blast_raw %>% mutate(hit_rank = NA_integer_)
+}
+
+blast_best <- if (nrow(blast_top) > 0) {
+  blast_top %>%
+    filter(hit_rank == 1) %>%
+    select(
+      qseqid,
+      sseqid,
+      blast_pident = pident,
+      blast_mismatch = mismatch,
+      blast_qcovs = qcovs,
+      blast_bitscore = bitscore,
+      any_of(c("hit_variant", "hit_genotype"))
+    )
+} else {
+  tibble(
+    qseqid = character(),
+    sseqid = character(),
+    blast_pident = numeric(),
+    blast_mismatch = numeric(),
+    blast_qcovs = numeric(),
+    blast_bitscore = numeric(),
+    hit_variant = character(),
+    hit_genotype = character()
+  )
+}
+
+
+# Ensure hit_variant and hit_genotype columns exist
+if (!"hit_variant" %in% names(blast_best)) blast_best$hit_variant <- NA_character_
+if (!"hit_genotype" %in% names(blast_best)) blast_best$hit_genotype <- NA_character_
+
+# Harmonise and rename
+blast_best <- blast_best %>%
+  mutate(
+    blast_variant  = hit_variant,
+    blast_genotype = coalesce(as.character(harmonise_genotype(hit_genotype)),
+                              as.character(genotype_from_name(sseqid)))
+  ) %>%
+  select(-any_of(c("hit_variant", "hit_genotype")))
+
+# ── Master summary table ──────────────────────────────────────────────────────
+# BLAST truncates FASTA headers at the first whitespace, so its qseqid is only
+# the first token of the full sequence name (e.g. "barcode84" rather than
+# "barcode84 HAV LC128713.1_IB mincov=20"). Join on that first token so WGS
+# consensus headers (which carry spaces) still match. For single-word Sanger
+# names the first token equals the full name, so this is backward-compatible.
+summary_tbl <- nc_lineages %>%
+  mutate(.join_key = word(seqName, 1)) %>%
+  left_join(blast_best %>% 
+            mutate(.join_key = word(qseqid, 1)) %>% 
+            select(.join_key, qseqid, everything()),
+            by = ".join_key") %>%
+  select(-.join_key)
+
+# ── Input FASTA summary (raw batch input) ───────────────────────────────────
+read_fasta_simple <- function(path) {
+  if (!file.exists(path)) return(tibble(header = character(), sequence = character()))
+
+  lines <- readLines(path, warn = FALSE)
+  if (length(lines) == 0) return(tibble(header = character(), sequence = character()))
+
+  recs <- list()
+  cur_h <- NULL
+  cur_s <- character()
+
+  flush_rec <- function() {
+    if (is.null(cur_h)) return(NULL)
+    recs[[length(recs) + 1]] <<- tibble(
+      header = cur_h,
+      sequence = paste(cur_s, collapse = "")
+    )
+    NULL
+  }
+
+  for (ln in lines) {
+    ln <- trimws(ln)
+    if (!nzchar(ln)) next
+    if (startsWith(ln, ">")) {
+      flush_rec()
+      cur_h <- sub("^>", "", ln)
+      cur_s <- character()
+    } else {
+      cur_s <- c(cur_s, ln)
+    }
+  }
+  flush_rec()
+
+  bind_rows(recs)
+}
+
+parse_primer_header <- function(header) {
+  parts <- strsplit(header, "[[:space:]]+")[[1]]
+  name <- parts[1]
+  meta <- list()
+  if (length(parts) > 1) {
+    for (token in parts[-1]) {
+      if (grepl("=", token, fixed = TRUE)) {
+        kv <- strsplit(token, "=", fixed = TRUE)[[1]]
+        if (length(kv) == 2) meta[[tolower(kv[1])]] <- kv[2]
+      }
+    }
+  }
+  list(name = name, meta = meta)
+}
+
+iupac_sets <- c(
+  A = "A", C = "C", G = "G", T = "T", U = "T",
+  R = "AG", Y = "CT", S = "GC", W = "AT", K = "GT", M = "AC",
+  B = "CGT", D = "AGT", H = "ACT", V = "ACG", N = "ACGT", I = "ACGT", `5` = "ACGT"
+)
+
+primer_rc <- function(seq) {
+  seq <- str_to_upper(seq)
+  rc_map <- c(A = "T", C = "G", G = "C", T = "A", U = "A",
+              R = "Y", Y = "R", S = "S", W = "W", K = "M", M = "K",
+              B = "V", D = "H", H = "D", V = "B", N = "N", I = "N", `5` = "N")
+  bases <- strsplit(seq, "", fixed = TRUE)[[1]]
+  paste0(rev(unname(rc_map[bases])), collapse = "")
+}
+
+base_compatible <- function(seq_base, primer_base) {
+  seq_base <- toupper(seq_base)
+  primer_base <- toupper(primer_base)
+  seq_chars <- strsplit(iupac_sets[[seq_base]] %||% seq_base, "", fixed = TRUE)[[1]]
+  primer_chars <- strsplit(iupac_sets[[primer_base]] %||% primer_base, "", fixed = TRUE)[[1]]
+  length(intersect(seq_chars, primer_chars)) > 0
+}
+
+find_best_end_overlap <- function(sequence, primer_sequence, side = c("left", "right"), min_overlap = 8L) {
+  side <- match.arg(side)
+  seq_chars <- strsplit(str_to_upper(sequence), "", fixed = TRUE)[[1]]
+  primer_chars <- strsplit(str_to_upper(primer_sequence), "", fixed = TRUE)[[1]]
+  max_overlap <- min(length(seq_chars), length(primer_chars))
+  if (max_overlap < min_overlap) return(0L)
+
+  for (overlap in seq(max_overlap, min_overlap, by = -1L)) {
+    if (side == "left") {
+      seq_window <- seq_chars[seq_len(overlap)]
+    } else {
+      seq_window <- tail(seq_chars, overlap)
+    }
+    primer_window <- primer_chars[seq_len(overlap)]
+    matched <- vapply(seq_len(overlap), function(i) base_compatible(seq_window[[i]], primer_window[[i]]), logical(1))
+    if (all(matched)) return(overlap)
+  }
+  0L
+}
+
+# Primer-like IUPAC symbols commonly found in degenerate primer regions
+primer_like_codes <- c("R", "Y", "W", "S", "K", "M", "B", "D", "H", "V", "N")
+called_codes <- c("A", "C", "G", "T")
+
+fasta_raw <- read_fasta_simple(input_fasta)
+
+input_seq_summary <- fasta_raw %>%
+  mutate(
+    seqName = header,
+    sequence = str_to_upper(sequence),
+    seq_chars = map(sequence, ~strsplit(.x, "", fixed = TRUE)[[1]]),
+    length = map_int(seq_chars, length),
+    ambiguous_count = map_int(seq_chars, ~sum(!(.x %in% called_codes))),
+    ambiguous_chars = map_chr(seq_chars, ~{
+      x <- sort(unique(.x[!(.x %in% called_codes)]))
+      if (length(x) == 0) "" else paste(x, collapse = ",")
+    }),
+    primer_like_count = map_int(seq_chars, ~sum(.x %in% primer_like_codes)),
+    primer_like_chars = map_chr(seq_chars, ~{
+      x <- sort(unique(.x[.x %in% primer_like_codes]))
+      if (length(x) == 0) "" else paste(x, collapse = ",")
+    })
+  ) %>%
+  select(seqName, length, ambiguous_count, ambiguous_chars,
+         primer_like_count, primer_like_chars, sequence)
+
+# ── Primer catalog and end-overlap scan ──────────────────────────────────────
+primer_min_overlap <- 8L
+primer_catalog <- read_fasta_simple(file.path(proj_dir, "data", "Primers", "PCR_primers", "primers.fa")) %>%
+  mutate(
+    parsed = map(header, parse_primer_header),
+    primer_name = map_chr(parsed, "name"),
+    primer_direction = map_chr(parsed, ~.x$meta$direction %||% ""),
+    primer_region = map_chr(parsed, ~.x$meta$region %||% ""),
+    primer_comment = map_chr(parsed, ~.x$meta$comment %||% ""),
+    primer_sequence = str_to_upper(sequence),
+    primer_rc_sequence = map_chr(primer_sequence, primer_rc),
+    primer_end = if_else(primer_direction == "F", "5' end", "3' end")
+  ) %>%
+  select(primer_name, primer_direction, primer_region, primer_comment, primer_sequence, primer_rc_sequence, primer_end)
+
+primer_hits <- if (nrow(input_seq_summary) > 0 && nrow(primer_catalog) > 0) {
+  map_dfr(seq_len(nrow(input_seq_summary)), function(i) {
+    seq_row <- input_seq_summary[i, ]
+    map_dfr(seq_len(nrow(primer_catalog)), function(j) {
+      primer_row <- primer_catalog[j, ]
+      scan_seq <- if (primer_row$primer_direction == "F") primer_row$primer_sequence[[1]] else primer_row$primer_rc_sequence[[1]]
+      left_overlap <- find_best_end_overlap(seq_row$sequence[[1]], scan_seq, side = "left", min_overlap = primer_min_overlap)
+      right_overlap <- find_best_end_overlap(seq_row$sequence[[1]], scan_seq, side = "right", min_overlap = primer_min_overlap)
+      hits <- tibble(
+        seqName = seq_row$seqName[[1]],
+        sequence_length = seq_row$length[[1]],
+        primer_name = primer_row$primer_name[[1]],
+        primer_direction = primer_row$primer_direction[[1]],
+        primer_region = primer_row$primer_region[[1]],
+        primer_end = primer_row$primer_end[[1]],
+        match_side = c("left", "right"),
+        overlap_nt = c(left_overlap, right_overlap)
+      ) %>%
+        filter(overlap_nt >= primer_min_overlap)
+
+      if (nrow(hits) == 0) return(tibble())
+
+      hits %>%
+        mutate(
+          start = if_else(match_side == "left", 1L, sequence_length - overlap_nt + 1L),
+          end = if_else(match_side == "left", overlap_nt, sequence_length),
+          matched_sequence = substr(seq_row$sequence[[1]], start, end),
+          matched_fraction = round(overlap_nt / nchar(scan_seq), 2),
+          end_label = if_else(match_side == "left", "5' end", "3' end")
+        )
+    })
+  })
+} else {
+  tibble()
+}
+
+primer_hits_table <- if (nrow(primer_hits) > 0) {
+  primer_hits %>%
+    arrange(seqName, match_side, desc(overlap_nt), primer_name)
+} else {
+  tibble()
+}
+
+primer_hit_plot <- if (nrow(primer_hits_table) > 0) {
+  plot_df <- primer_hits_table %>%
+    mutate(
+      seqName = factor(seqName, levels = unique(seqName)),
+      primer_label = if_else(primer_region == "", primer_name, paste0(primer_name, " (", primer_region, ")"))
+    )
+
+  ggplot(plot_df, aes(y = seqName)) +
+    geom_segment(aes(x = start, xend = end, yend = seqName, color = primer_label),
+                 linewidth = 5.5, lineend = "round", alpha = 0.9) +
+    geom_point(aes(x = start), size = 1.8, color = "#111827") +
+    geom_point(aes(x = end), size = 1.8, color = "#111827") +
+    facet_wrap(~match_side, ncol = 1, scales = "free_y") +
+    scale_x_continuous(expand = expansion(mult = c(0.02, 0.04))) +
+    labs(
+      title = "Potential primer remnants on input sequences",
+      subtitle = paste0("Compatible end-overlaps of at least ", primer_min_overlap, " nt against built-in primer set"),
+      x = "Position in input sequence (nt)",
+      y = NULL,
+      color = "Primer"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      strip.text = element_text(face = "bold"),
+      legend.position = "bottom"
+    )
+} else {
+  NULL
+}
+
+# ── Primer / input-sequence coverage map ────────────────────────────────────
+# Coordinate system: NC_001489.1 full-genome positions.
+# The 349 bp NextClade reference maps to 2919-3267 (offset = 2918 to convert
+# 1-based 349 bp coords → full-genome coords).
+nc_ref_offset    <- 2918L
+coverage_map_win <- c(2798L, 3475L)  # display window
+
+# Best primer binding sites (full-genome) from GFF3 analysis
+primerbind <- tibble(
+  primer_name = c("HAV_6.1", "HAV_8.2", "HAV_11", "HAV_10"),
+  fg_start    = c(2832L, 2886L, 3375L, 3417L),
+  fg_end      = c(2857L, 2914L, 3403L, 3445L),
+  direction   = c("F", "F", "R", "R"),
+  role        = c("First-outer", "nested-inner", "nested-inner", "First-outer")
+)
+
+# Input sequence positions in full-genome coords
+seq_fg <- nc_lineages_raw %>%
+  select(seqName, alignmentStart, alignmentEnd) %>%
+  mutate(
+    fg_start = if_else(!is.na(alignmentStart), as.integer(alignmentStart) + nc_ref_offset, NA_integer_),
+    fg_end   = if_else(!is.na(alignmentEnd),   as.integer(alignmentEnd)   + nc_ref_offset, NA_integer_),
+    aligned  = !is.na(fg_start)
+  )
+
+# Which sequence ends have flagged primer remnants?
+left_hit_seqs  <- if (nrow(primer_hits_table) > 0) {
+  primer_hits_table %>% filter(match_side == "left")  %>% pull(seqName) %>% unique()
+} else {
+  character()
+}
+right_hit_seqs <- if (nrow(primer_hits_table) > 0) {
+  primer_hits_table %>% filter(match_side == "right") %>% pull(seqName) %>% unique()
+} else {
+  character()
+}
+
+# Build y positions: reference at bottom, then primers, then input sequences
+bar_h     <- 0.37
+prim_gap  <- 1.4
+ref_y     <- 0
+n_prim    <- nrow(primerbind)
+prim_ys   <- setNames(seq_len(n_prim) * 1.0 + 0.5, rev(primerbind$primer_name))
+seq_names_ord <- rev(seq_fg$seqName)
+n_seqs    <- length(seq_names_ord)
+seq_ys    <- setNames(seq_along(seq_names_ord) + n_prim + prim_gap, seq_names_ord)
+
+prim_colors <- c(
+  "HAV_6.1" = "#1f77b4", "HAV_8.2" = "#2ca02c",
+  "HAV_11"  = "#d62728", "HAV_10"  = "#ff7f0e"
+)
+
+ref_df   <- tibble(xmin = coverage_map_win[[1]], xmax = coverage_map_win[[2]],
+                   ymin = ref_y - bar_h, ymax = ref_y + bar_h)
+
+primerbind_df <- primerbind %>%
+  mutate(
+    y    = prim_ys[primer_name],
+    ymin = y - bar_h, ymax = y + bar_h,
+    arw_x    = if_else(direction == "F", fg_end,   fg_start),
+    arw_xend = if_else(direction == "F", fg_end + 16L, fg_start - 16L)
+  )
+
+seq_df <- seq_fg %>%
+  mutate(
+    y    = seq_ys[seqName],
+    ymin = y - bar_h, ymax = y + bar_h,
+    xmin = if_else(aligned, fg_start, coverage_map_win[[1]]),
+    xmax = if_else(aligned, fg_end,   coverage_map_win[[2]]),
+    has_left_hit  = seqName %in% left_hit_seqs,
+    has_right_hit = seqName %in% right_hit_seqs
+  )
+
+# Primer-remnant highlight bars at sequence ends (orange overlay)
+hit_left_df <- seq_df %>% filter(aligned, has_left_hit) %>%
+  mutate(xmin_h = fg_start, xmax_h = fg_start + 29L)
+hit_right_df <- seq_df %>% filter(aligned, has_right_hit) %>%
+  mutate(xmin_h = fg_end - 29L, xmax_h = fg_end)
+hit_overlay_df <- bind_rows(hit_left_df, hit_right_df)
+
+coverage_map_plot <- ggplot() +
+  # Product region shading
+  annotate("rect", xmin = 2832, xmax = 3445,
+           ymin = -Inf, ymax = Inf, fill = "#bbbbbb", alpha = 0.15) +
+  annotate("rect", xmin = 2886, xmax = 3403,
+           ymin = -Inf, ymax = Inf, fill = "#888888", alpha = 0.15) +
+  # Reference bar
+  geom_rect(data = ref_df,
+            aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+            fill = "#444444", color = NA, inherit.aes = FALSE) +
+  # Aligned input sequence bars
+  geom_rect(data = seq_df %>% filter(aligned),
+            aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+            fill = "#aec6e8", color = "#1a6bb5", linewidth = 0.3, inherit.aes = FALSE) +
+  # Unaligned sequences (dashed)
+  geom_rect(data = seq_df %>% filter(!aligned),
+            aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+            fill = "#e8e8e8", color = "#999999", linewidth = 0.3,
+            linetype = "dashed", inherit.aes = FALSE) +
+  # Primer-remnant overlays at sequence ends
+  geom_rect(data = hit_overlay_df,
+            aes(xmin = xmin_h, xmax = xmax_h, ymin = ymin, ymax = ymax),
+            fill = "#e05c00", alpha = 0.6, color = NA, inherit.aes = FALSE) +
+  # Primer binding site bars
+  geom_rect(data = primerbind_df,
+            aes(xmin = fg_start, xmax = fg_end, ymin = ymin, ymax = ymax,
+                fill = primer_name),
+            color = "white", linewidth = 0.5, inherit.aes = FALSE) +
+  scale_fill_manual(values = prim_colors, name = "Primer") +
+  # Direction arrows
+  geom_segment(data = primerbind_df,
+               aes(x = arw_x, xend = arw_xend, y = y, yend = y,
+                   color = primer_name),
+               arrow = arrow(length = unit(0.12, "cm"), type = "closed"),
+               linewidth = 0.9, inherit.aes = FALSE) +
+  scale_color_manual(values = prim_colors, guide = "none") +
+  # Axes and labels
+  scale_x_continuous(
+    limits = coverage_map_win,
+    labels = scales::comma,
+    expand = expansion(mult = 0),
+    name = "NC_001489.1 position (bp)"
+  ) +
+  scale_y_continuous(
+    breaks = c(ref_y, unname(prim_ys), unname(seq_ys)),
+    labels = c("Reference", names(prim_ys), names(seq_ys)),
+    expand = expansion(add = 0.9)
+  ) +
+  labs(
+    title    = "Primer binding sites and input sequence coverage",
+    subtitle = paste0(
+      "Shading: outer PCR product (light, ", 2832, "-", 3445, " bp) and ",
+      "inner/nested product (dark, ", 2886, "-", 3403, " bp).\n",
+      "Orange = detected primer remnant at sequence end. Dashed = failed alignment."
+    ),
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor   = element_blank(),
+    axis.text.y        = element_text(size = 9),
+    legend.position    = "right"
+  )
+
+# ── Junction-focused alignment view (from Nextclade) ───────────────────────
+junction_aln_path <- file.path(out_dir, "lineages", "nextclade.aligned.fasta")
+junction_aln <- safe_read_dna_fasta(junction_aln_path)
+
+junction_is_usable <- !is.null(junction_aln) && nrow(junction_aln) >= 2
+
+junction_msa_plot <- NULL
+junction_var_plot <- NULL
+
+if (junction_is_usable) {
+  junction_ids <- rownames(junction_aln)
+
+  junction_order <- summary_tbl %>%
+    select(seqName, clade, qc_status) %>%
+    mutate(
+      clade_rank = dplyr::coalesce(clade, "ZZZ"),
+      qc_rank = dplyr::coalesce(qc_status, "ZZZ")
+    ) %>%
+    arrange(clade_rank, qc_rank, seqName) %>%
+    pull(seqName)
+
+  junction_order <- unique(c(junction_order[junction_order %in% junction_ids], junction_ids))
+
+  junction_labels <- summary_tbl %>%
+    select(seqName, clade) %>%
+    mutate(
+      clade = if_else(is.na(clade) | clade == "", "?", clade),
+      label = paste0(seqName, " [", clade, "]")
+    ) %>%
+    select(seqName, label)
+
+  label_map <- setNames(junction_labels$label, junction_labels$seqName)
+
+  dna_ss_junc <- tryCatch(Biostrings::readDNAStringSet(junction_aln_path), error = function(e) NULL)
+  if (!is.null(dna_ss_junc)) {
+    keep_ids <- junction_order[junction_order %in% names(dna_ss_junc)]
+    if (length(keep_ids) >= 2) {
+      dna_ss_junc <- dna_ss_junc[keep_ids]
+      names(dna_ss_junc) <- dplyr::coalesce(label_map[names(dna_ss_junc)], names(dna_ss_junc))
+
+      junction_msa_plot <- ggmsa::ggmsa(
+        dna_ss_junc,
+        start = 1,
+        end = Biostrings::width(dna_ss_junc)[1],
+        color = "Chemistry_NT",
+        seq_name = TRUE,
+        font = NULL,
+        show.legend = TRUE
+      ) +
+        labs(
+          title = "Nextclade junction alignment (full displayed window)",
+          subtitle = "All batch query sequences aligned to the short VP1-2B junction reference",
+          x = "Junction alignment position",
+          y = NULL
+        ) +
+        theme_bw(base_size = 9) +
+        theme(
+          plot.title = element_text(face = "bold", size = 10),
+          axis.text.y = element_text(size = 6.5),
+          axis.text.x = element_text(size = 7)
+        )
+    } # end junction MSA plot
+  } # end junction alignment visualization
+
+  mat_j <- tolower(junction_aln[junction_order, , drop = FALSE])
+  called_j <- c("a", "c", "g", "t")
+
+  .cons_j <- function(col) {
+    vals <- col[col %in% called_j]
+    if (length(vals) == 0) return(NA_character_)
+    tab <- sort(table(vals), decreasing = TRUE)
+    names(tab)[1]
+  }
+
+  consensus_j <- apply(mat_j, 2, .cons_j)
+  snp_count_j <- sapply(seq_len(ncol(mat_j)), function(k) {
+    col <- mat_j[, k]
+    cons <- consensus_j[k]
+    if (is.na(cons)) return(0L)
+    sum(col %in% called_j & col != cons)
+  })
+  var_cols_j <- which(snp_count_j > 0)
+
+  if (length(var_cols_j) > 0) {
+    mat_var_j <- mat_j[, var_cols_j, drop = FALSE]
+    pos_var_j <- var_cols_j
+    row_ids_j <- rownames(mat_var_j)
+
+    display_levels_j <- rev(dplyr::coalesce(label_map[row_ids_j], row_ids_j))
+
+    var_grid_j <- expand.grid(
+      seq_id = row_ids_j,
+      col_i = seq_len(ncol(mat_var_j)),
+      KEEP.OUT.ATTRS = FALSE,
+      stringsAsFactors = FALSE
+    ) %>%
+      as_tibble() %>%
+      mutate(
+        base = mat_var_j[cbind(match(seq_id, row_ids_j), col_i)],
+        position = pos_var_j[col_i],
+        seq_label = dplyr::coalesce(label_map[seq_id], seq_id),
+        base_class = case_when(
+          base %in% called_j ~ str_to_upper(base),
+          base == "-" ~ "Gap",
+          TRUE ~ "Ambig"
+        )
+      )
+
+    nt_pal_j <- c(
+      "A" = "#4daf4a", "C" = "#377eb8", "G" = "#ff7f00", "T" = "#e41a1c",
+      "Gap" = "#f5f5f5", "Ambig" = "#6a3d9a"
+    )
+
+    junction_var_plot <- ggplot(
+      var_grid_j,
+      aes(x = position, y = factor(seq_label, levels = display_levels_j), fill = base_class)
+    ) +
+      geom_tile(color = "white", linewidth = 0.15) +
+      scale_fill_manual(values = nt_pal_j, drop = FALSE) +
+      labs(
+        title = paste0("Nextclade junction variant-only view (", length(var_cols_j), " variable sites)"),
+        x = "Junction alignment position (variable sites)",
+        y = NULL,
+        fill = "Base"
+      ) +
+      theme_bw(base_size = 10) +
+      theme(
+        axis.text.y = element_text(size = 7),
+        panel.grid = element_blank(),
+        plot.title = element_text(face = "bold", size = 10),
+        legend.position = "bottom"
+      )
+  } # end junction variant plot
+} # end junction alignment check
+
+input_overview <- if (nrow(input_seq_summary) > 0) {
+  lens <- input_seq_summary$length
+  tibble(
+    metric = c(
+      "Total sequences",
+      "Unique headers",
+      "Duplicated headers",
+      "Min length",
+      "Max length",
+      "Mean length",
+      "Median length",
+      "Sequences with ambiguous bases",
+      "Total ambiguous bases",
+      "Sequences with primer-like IUPAC codes",
+      "Total primer-like IUPAC bases"
+    ),
+    value = c(
+      nrow(input_seq_summary),
+      n_distinct(input_seq_summary$seqName),
+      nrow(input_seq_summary) - n_distinct(input_seq_summary$seqName),
+      min(lens),
+      max(lens),
+      round(mean(lens), 2),
+      round(stats::median(lens), 2),
+      sum(input_seq_summary$ambiguous_count > 0),
+      sum(input_seq_summary$ambiguous_count),
+      sum(input_seq_summary$primer_like_count > 0),
+      sum(input_seq_summary$primer_like_count)
+    )
+  )
+} else {
+  tibble(metric = "Input FASTA", value = "Not found")
+}
+
+summary_tbl <- summary_tbl %>%
+  mutate(
+    clade_agree_blast = case_when(
+      !is.na(blast_genotype) & !is.na(clade) ~
+        str_to_upper(replace_na(blast_genotype, "")) ==
+          str_to_upper(replace_na(clade, "")),
+      TRUE ~ NA
+    )
+  )
+
+# ── Read samplesheet for LabWareID and SequenceID ─────────────────────────────
+.ss_sample_info <- tibble(
+  Sample = character(),
+  LabWareID = character(),
+  SekvensID = character()
+)
+
+.ss_path <- file.path(batch_dir, "auto_samplesheet.tsv")
+if (!file.exists(.ss_path)) {
+  # Try finding any samplesheet
+  .ss_files <- list.files(batch_dir, pattern = "samplesheet\\.tsv$", full.names = TRUE)
+  if (length(.ss_files) > 0) .ss_path <- .ss_files[1]
+}
+if (file.exists(.ss_path)) {
+  .ss_sample_info <- safe_tsv(.ss_path) %>%
+    select(Sample, any_of(c("LabWareID", "SekvensID"))) %>%
+    distinct()
+}
+
+# ── Add input sequence metrics to summary ─────────────────────────────────────
+.input_metrics <- if (nrow(input_seq_summary) > 0) {
+  input_seq_summary %>%
+    transmute(
+      seqName,
+      input_length = length,
+      ambiguous_count
+    )
+} else {
+  tibble(
+    seqName = character(),
+    input_length = integer(),
+    ambiguous_count = integer()
+  )
+}
+
+# ── Count BLAST database occurrences per variant and find similar variants ────
+# This helps identify how common the detected variant is in the reference database
+# and warns if other variants are equally similar (SNP distance <= 3)
+.db_variant_summary <- {
+  metadata_tsv_df <- safe_tsv(metadata_tsv)
+
+
+  if (nrow(metadata_tsv_df) > 0 && "variant" %in% names(metadata_tsv_df) && nrow(blast_raw) > 0) {
+    # Normalize metadata variant into one canonical column for counting/joining.
+    metadata_variant <- metadata_tsv_df %>%
+      transmute(
+        id,
+        variant = as.character(.data[["variant"]])
+      ) %>%
+      filter(!is.na(variant), variant != "")
+
+    # Count sequences per variant in the local database.
+    variant_counts <- metadata_variant %>%
+      count(variant, name = "db_count") %>%
+      rename(blast_variant = variant)
+
+    # Join BLAST results with metadata to get variant per hit.
+    blast_with_variant <- blast_raw %>%
+      left_join(metadata_variant %>% rename(sseqid = id), by = "sseqid")
+
+    # For each sample/query, find alternative variant within <=3 SNP total
+    # from the query sequence (absolute threshold, not relative to best hit).
+    similar_variants <- blast_with_variant %>%
+      filter(!is.na(variant)) %>%
+      group_by(qseqid) %>%
+      arrange(mismatch, desc(bitscore), .by_group = TRUE) %>%
+      mutate(
+        best_sseqid = first(sseqid),
+        best_variant = first(variant)
+      ) %>%
+      filter(
+        sseqid != best_sseqid,
+        variant != best_variant,
+        mismatch <= 3
+      ) %>%
+      summarise(
+        sseqid = first(best_sseqid),
+        similar_variants = paste(unique(sort(variant)), collapse = ", "),
+        .groups = "drop"
+      )
+
+    list(
+      counts = variant_counts,
+      similar = similar_variants
+    )
+  } else {
+    list(
+      counts = tibble(blast_variant = character(), db_count = integer()),
+      similar = tibble(qseqid = character(), sseqid = character(), similar_variants = character())
+    )
+  }
+}
+
+.blast_variant_counts <- .db_variant_summary$counts %>%
+  rename(db_variant_count = db_count)
+
+.similar_variants_map <- .db_variant_summary$similar %>%
+  setNames(c("qseqid", "sseqid", "similar_variants")) %>%
+  {if (nrow(.) > 0) . else tibble(sseqid = character(), similar_variants = character())}
+
+# ── Batch triage: one confidence flag per sample ──────────────────────────────
+# Lets the expert skip the obvious calls and focus on the few that need a look.
+# The flag is driven by genotype confidence (the report's primary question), not
+# by raw BLAST %identity — for WGS the nearest reference rarely reaches
+# outbreak-level identity, so a %id threshold would flag everything.
+.called <- if (nrow(input_seq_summary) > 0) {
+  input_seq_summary %>%
+    transmute(join_key   = word(seqName, 1),
+              called_frac = if_else(length > 0, (length - ambiguous_count) / length, NA_real_))
+} else tibble(join_key = character(), called_frac = numeric())
+
+triage_tbl <- summary_tbl %>%
+  mutate(join_key = word(seqName, 1)) %>%
+  left_join(.called, by = "join_key") %>%
+  left_join(.input_metrics, by = "seqName") %>%
+  left_join(.ss_sample_info, by = c("seqName" = "Sample")) %>%
+  left_join(.blast_variant_counts, by = "blast_variant") %>%
+  left_join(.db_variant_summary$similar, 
+            by = c("qseqid" = "qseqid", "sseqid" = "sseqid")) %>%
+  mutate(
+    # Format similar variants warning
+    similar_variants_msg = map_chr(similar_variants, ~ {
+      if (is.na(.x) || .x == "") return("")
+      ids <- str_split(.x, ",\\s*", simplify = FALSE)[[1]]
+      ids <- trimws(ids)
+      lines <- split(ids, ceiling(seq_along(ids) / 2))
+      wrapped_ids <- map_chr(lines, ~ paste(.x, collapse = ", "))
+      paste0("⚠ Also similar (≤3 SNPs):<br>",
+             paste(wrapped_ids, collapse = "<br>"),
+             "<br>— see heatmap")
+    }),
+    flag = case_when(
+      is.na(clade)                                   ~ "No call",
+      !is.na(clade_agree_blast) & !clade_agree_blast ~ "Review",
+      TRUE                                           ~ "Clear"
+    ),
+    flag_reason = case_when(
+      flag == "No call" & !is.na(called_frac) ~ sprintf("No NextClade call (%.0f%% of genome called)", 100 * called_frac),
+      flag == "No call"                       ~ "No NextClade call",
+      flag == "Review"                        ~ "NextClade and BLAST genotype disagree",
+      TRUE                                    ~ ""
+    )
+  )
 ```
+
+# `r batch_name` — HAV Analysis Summary
+
+This report compares complementary HAV analyses run on **`r batch_name`**:
+
+| Analysis | Description |
+|---|---|
+| **NC-lineages** | NextClade with `hav-vp1-2b` dataset — assigns clade (IA/IB/IIA/IIIA) |
+| **BLAST** | BLAST against local Norwegian HAV sequence database |
+
+---
 
 # 1. Batch overview {.tabset}
 
@@ -24,17 +1272,17 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 triage_tbl %>%
   arrange(seqName) %>%
   transmute(
-    `LabWareID`     = if_else(!is.na(LabWareID), LabWareID, "â€”"),
-    `SequenceID`    = if_else(!is.na(SekvensID), SekvensID, "â€”"),
-    `Genotype (NC)` = if_else(!is.na(clade), clade, "â€”"),
-    `Genotype (BLAST)` = if_else(!is.na(blast_genotype), blast_genotype, "â€”"),
-    `BLAST top hit` = if_else(!is.na(sseqid), sseqid, "â€”"),
-    `BLAST variant` = if_else(!is.na(blast_variant), blast_variant, "â€”"),
-    `BLAST SNPs`    = if_else(!is.na(blast_mismatch), as.character(blast_mismatch), "â€”"),
-    `DB variant count` = if_else(!is.na(db_variant_count), as.character(db_variant_count), "â€”"),
-    `Similar BLAST variant` = if_else(similar_variants_msg != "", similar_variants_msg, "â€”"),
-    `Input length`  = if_else(!is.na(input_length), as.character(input_length), "â€”"),
-    `Ambiguous`     = if_else(!is.na(ambiguous_count), as.character(ambiguous_count), "â€”"),
+    `LabWareID`     = if_else(!is.na(LabWareID), LabWareID, "—"),
+    `SequenceID`    = if_else(!is.na(SekvensID), SekvensID, "—"),
+    `Genotype (NC)` = if_else(!is.na(clade), clade, "—"),
+    `Genotype (BLAST)` = if_else(!is.na(blast_genotype), blast_genotype, "—"),
+    `BLAST top hit` = if_else(!is.na(sseqid), sseqid, "—"),
+    `BLAST variant` = if_else(!is.na(blast_variant), blast_variant, "—"),
+    `BLAST SNPs`    = if_else(!is.na(blast_mismatch), as.character(blast_mismatch), "—"),
+    `DB variant count` = if_else(!is.na(db_variant_count), as.character(db_variant_count), "—"),
+    `Similar BLAST variant` = if_else(similar_variants_msg != "", similar_variants_msg, "—"),
+    `Input length`  = if_else(!is.na(input_length), as.character(input_length), "—"),
+    `Ambiguous`     = if_else(!is.na(ambiguous_count), as.character(ambiguous_count), "—"),
     .clade = clade,
     .blast_genotype = blast_genotype,
     .clade_agree_blast = clade_agree_blast
@@ -43,7 +1291,7 @@ triage_tbl %>%
 # Calculate background colors for BLAST SNPs column
 .snp_colors <- .triage_display$`BLAST SNPs` %>%
   map_chr(~ {
-    if (. == "â€”") {
+    if (. == "—") {
       ""  # Empty string for no background
     } else {
       snp_count <- as.numeric(.)
@@ -60,7 +1308,7 @@ triage_tbl %>%
 # Calculate background colors for Input length column (yellow if != 460)
 .input_length_colors <- .triage_display$`Input length` %>%
   map_chr(~ {
-    if (. == "â€”") {
+    if (. == "—") {
       ""
     } else {
       length_val <- as.numeric(.)
@@ -93,7 +1341,7 @@ triage_tbl %>%
   select(-starts_with(".")) %>%
   kbl(escape = FALSE,
       table.attr = 'style="width: auto;"',
-      caption = "Batch overview â€” sorted by sequence name. Red background on Genotype columns indicates disagreement between NextClade (NC) and BLAST genotype assignments. DB variant count = number of sequences in reference database with same BLAST variant.") %>%
+      caption = "Batch overview — sorted by sequence name. Red background on Genotype columns indicates disagreement between NextClade (NC) and BLAST genotype assignments. DB variant count = number of sequences in reference database with same BLAST variant.") %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE) %>%
   column_spec(1, width = "10em", extra_css = "white-space: nowrap;") %>%  # LabWareID
   column_spec(2, width = "12em", extra_css = "white-space: nowrap;") %>%  # SequenceID
@@ -114,7 +1362,7 @@ triage_tbl %>%
   select(-starts_with(".")) %>%
   kbl(escape = FALSE,
       table.attr = 'style="width: auto;"',
-      caption = "Batch overview (compact view without scrolling) â€” same data as above. Red background on Genotype columns indicates disagreement between NextClade and BLAST.") %>%
+      caption = "Batch overview (compact view without scrolling) — same data as above. Red background on Genotype columns indicates disagreement between NextClade and BLAST.") %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
   column_spec(3, background = .genotype_nc_colors) %>%  # Genotype (NC)
   column_spec(4, background = .genotype_blast_colors) %>%  # Genotype (BLAST)
@@ -122,7 +1370,7 @@ triage_tbl %>%
   column_spec(10, background = .input_length_colors)  # Color code Input length
 ```
 
-`r {n_clear <- sum(triage_tbl$flag=="Clear"); n_rev <- sum(triage_tbl$flag=="Review"); n_no <- sum(triage_tbl$flag=="No call"); sprintf("**%d clear Â· %d to review Â· %d no call** of %d samples.", n_clear, n_rev, n_no, nrow(triage_tbl))}`
+`r {n_clear <- sum(triage_tbl$flag=="Clear"); n_rev <- sum(triage_tbl$flag=="Review"); n_no <- sum(triage_tbl$flag=="No call"); sprintf("**%d clear · %d to review · %d no call** of %d samples.", n_clear, n_rev, n_no, nrow(triage_tbl))}`
 
 ## Placement tree (NextClade)
 
@@ -131,7 +1379,7 @@ triage_tbl %>%
 .ptr <- if (file.exists(.nwk_path)) tryCatch(read.tree(.nwk_path), error = function(e) NULL) else NULL
 
 if (is.null(.ptr)) {
-  cat("NextClade placement tree (`nextclade.nwk`) not found â€” run the NextClade step first.")
+  cat("NextClade placement tree (`nextclade.nwk`) not found — run the NextClade step first.")
 } else {
   .qids <- word(all_queries, 1)
   .tipmeta <- tibble(label = .ptr$tip.label) %>%
@@ -189,6 +1437,798 @@ if (is.null(.ptr)) {
   )
 }
 ```
+
+---
+
+# 5. BLAST analysis detail {.tabset}
+
+## Top hits per sequence
+
+```{r blast-detail}
+if (nrow(blast_top) > 0) {
+  blast_top %>%
+    filter(hit_rank <= 10) %>%
+    select(
+      Query = qseqid,
+      Rank = hit_rank,
+      Hit = sseqid,
+      `% identity` = pident,
+      `Query cov%` = qcovs,
+      SNPs = mismatch,
+      Bitscore = bitscore,
+      Genotype = hit_genotype,
+      Variant = hit_variant
+    ) %>%
+    mutate(
+      `% identity` = round(`% identity`, 2),
+      Genotype = replace_na(as.character(Genotype), "—"),
+      Variant = replace_na(as.character(Variant), "—")
+    ) %>%
+    kbl() %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = TRUE
+    ) %>%
+    scroll_box(height = "500px")
+} else {
+  cat("No BLAST results found.")
+}
+
+```
+---
+
+# 6. Per-sequence details {.tabset}
+
+## {.unlisted .unnumbered}
+
+```{r per-seq-details, results='asis'}
+suppressPackageStartupMessages({
+  library(pheatmap)
+  library(ggmsa)
+})
+
+# ── Shared setup ──────────────────────────────────────────────────────────────
+ref_meta <- meta %>%
+  select(id, genotype, variant) %>%
+  mutate(
+    id_norm = norm_id(id),
+    genotype = str_to_upper(genotype),
+    variant = if_else(
+      is.na(variant) | variant == "",
+      NA_character_,
+      variant
+    )
+  )
+
+query_ids <- summary_tbl$seqName
+called    <- c("a", "c", "g", "t")
+
+# Normalize query IDs to match tree directory names (first token only, trimmed)
+query_ids_normalized <- word(query_ids, 1)
+
+.is_called <- function(x) {
+  x %in% called
+}
+
+.consensus_base <- function(col) {
+  vals <- col[.is_called(col)]
+  if (length(vals) == 0) return(NA_character_)
+  tab <- sort(table(vals), decreasing = TRUE)
+  names(tab)[1]
+}
+
+.col_entropy <- function(col) {
+  vals <- col[.is_called(col)]
+  if (length(vals) == 0) return(NA_real_)
+  p <- as.numeric(table(vals)) / length(vals)
+  -sum(p * log2(p))
+}
+
+.roll_mean <- function(x, k = 15) {
+  n <- length(x)
+  if (n == 0) return(numeric(0))
+  k <- max(1L, as.integer(k))
+  h <- floor(k / 2)
+  sapply(seq_len(n), function(i) {
+    lo <- max(1L, i - h)
+    hi <- min(n, i + h)
+    mean(x[lo:hi], na.rm = TRUE)
+  })
+}
+
+.rescale01 <- function(x) {
+  rng <- range(x, na.rm = TRUE)
+  if (!all(is.finite(rng)) || diff(rng) == 0) return(rep(0, length(x)))
+  (x - rng[1]) / diff(rng)
+}
+
+.pick_zoom_windows <- function(score, n_windows = 5, width = 35) {
+  if (length(score) == 0 || all(!is.finite(score))) {
+    return(tibble(start = integer(), end = integer(), center = integer(), score = double()))
+  }
+  width <- max(5L, as.integer(width))
+  half  <- floor(width / 2)
+  ord   <- order(score, decreasing = TRUE, na.last = NA)
+  chosen <- integer()
+  for (idx in ord) {
+    if (length(chosen) >= n_windows) break
+    if (length(chosen) == 0 || all(abs(idx - chosen) > width)) {
+      chosen <- c(chosen, idx)
+    }
+  }
+  if (length(chosen) == 0) {
+    return(tibble(start = integer(), end = integer(), center = integer(), score = double()))
+  }
+  tibble(
+    center = chosen,
+    start  = pmax(1L, chosen - half),
+    end    = pmin(length(score), chosen + half),
+    score  = score[chosen]
+  ) %>%
+    arrange(desc(score))
+}
+
+treefile_exists <- sapply(query_ids_normalized, function(id) file.exists(file.path(trees_dir, id, "tree.treefile")))
+aln_exists <- sapply(query_ids_normalized, function(id) {
+  # Prefer BLAST-only alignment if available, otherwise fall back to full alignment
+  blast_only <- file.exists(file.path(trees_dir, id, "aligned_trimmed_blast_only.fa"))
+  full_aln <- file.exists(file.path(trees_dir, id, paste0(id, ".aligned_trimmed.fasta")))
+  blast_only || full_aln
+})
+
+if (length(query_ids) == 0) {
+  cat("## Status\n\n")
+  cat("*No sequences available in summary table for per-sequence details.*\n\n")
+} else if (!any(treefile_exists) && !any(aln_exists)) {
+  cat("## Status\n\n")
+  cat("Per-sequence tree outputs are not present for this batch, so detailed tree/alignment panels are skipped.\n\n")
+
+  status_tbl <- tibble(
+    Sequence = query_ids,
+    `Tree file` = if_else(treefile_exists, "Found", "Missing"),
+    `Tree alignment` = if_else(aln_exists, "Found", "Missing")
+  )
+
+  cat(kbl(status_tbl, caption = "Per-sequence tree artifacts") %>%
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                      full_width = TRUE) %>%
+        as.character())
+  cat("\n\n")
+
+  cat("Run this first (from project root) to populate section 6:\n\n")
+  cat("```bash\n")
+  cat(sprintf("bash scripts/build_per_seq_trees.sh %s %s\n", params$batch_dir, params$dataset_date))
+  cat("```\n\n")
+  cat("Short-region alignment inspection is still available in section 0 under **Junction alignment (focused viewer)**.\n\n")
+} else { # tree or alignment files are available
+for (i in seq_along(query_ids)) {
+  query_id <- query_ids[i]
+  query_id_norm <- query_ids_normalized[i]
+  cat(paste0("\n## ", query_id, "\n\n"))
+
+  tree_dir <- file.path(trees_dir, query_id_norm)
+  # Prefer BLAST-only alignment if available, otherwise fall back to full alignment
+  aln_file <- if (file.exists(file.path(tree_dir, "aligned_trimmed_blast_only.fa"))) {
+    file.path(tree_dir, "aligned_trimmed_blast_only.fa")
+  } else {
+    file.path(tree_dir, paste0(query_id_norm, ".aligned_trimmed.fasta"))
+  }
+  treefile <- file.path(tree_dir, "tree.treefile")
+  tr <- NULL
+
+  # Read alignment once — used by both SNP and MSA sections
+  seqs_raw <- if (file.exists(aln_file)) {
+    tryCatch(ape::read.dna(aln_file, format = "fasta", as.character = TRUE),
+             error = function(e) NULL)
+  } else NULL
+  # The saved .aligned.fasta/.aligned_trimmed.fasta files mark the query header
+  # with a trailing " [QUERY]" for readability — strip it back off so all the
+  # exact-match comparisons against query_id below keep working unchanged.
+  if (!is.null(seqs_raw)) {
+    rownames(seqs_raw) <- sub(" \\[QUERY\\]$", "", rownames(seqs_raw))
+  }
+  # Defensive: duplicate FASTA headers (e.g. from an older alignment generated
+  # before the batch FASTA duplicate-header guard) would otherwise crash
+  # data.frame() further down with "duplicate row.names". Keep the first
+  # occurrence's name intact (so query_id matching still works) and suffix
+  # any repeats instead of failing the whole report.
+  if (!is.null(seqs_raw) && anyDuplicated(rownames(seqs_raw)) > 0) {
+    dup_ids <- unique(rownames(seqs_raw)[duplicated(rownames(seqs_raw))])
+    cat(sprintf("*Warning: duplicate sequence header(s) in alignment (%s) — extra copies were renamed for display.*\n\n",
+                paste(dup_ids, collapse = ", ")))
+    rownames(seqs_raw) <- make.unique(rownames(seqs_raw))
+  }
+
+  # ── 1. Phylogenetic tree ────────────────────────────────────────────────────
+  cat("### Phylogenetic tree\n\n")
+  if (!file.exists(treefile)) {
+    cat("*Tree not available — run `build_per_seq_trees.sh` first.*\n\n")
+  } else {
+    tr <- tryCatch(read.tree(treefile), error = function(e) NULL)
+    if (is.null(tr)) {
+      cat("*Could not parse tree.*\n\n")
+    } else {
+      tr <- phangorn::midpoint(tr)
+
+      # If one/few branches are extreme outliers, branch-length plotting can
+      # visually collapse the rest of the tree. In that case, switch to a
+      # topology-only view for readability.
+      # The ratio alone is misleading for tight clusters (near-zero median
+      # branch length inflates the ratio even when the longest branch is
+      # small in absolute terms), so also require a genuinely large absolute
+      # branch length before falling back to the cladogram view.
+      edge_len <- tr$edge.length
+      edge_len <- edge_len[is.finite(edge_len) & !is.na(edge_len) & edge_len > 0]
+      long_branch_ratio <- if (length(edge_len) > 0) {
+        max(edge_len) / max(median(edge_len), 1e-6)
+      } else {
+        1
+      }
+      max_edge_len <- if (length(edge_len) > 0) max(edge_len) else 0
+      # Disabled for now — always render as a phylogram with real branch lengths.
+      # use_cladogram_view <- long_branch_ratio > 25 && max_edge_len > 0.05
+      use_cladogram_view <- FALSE
+
+tip_info <- tibble(id = tr$tip.label) %>%
+  left_join(
+    ref_meta %>%
+      select(id_norm, genotype, variant),
+    by = c("id" = "id_norm")
+  ) %>%
+  left_join(
+    community_meta,
+    by = "id"
+  ) %>%
+  mutate(
+    genotype = coalesce(
+      genotype,
+      community_clade
+    ),
+
+    is_query = id == query_id,
+
+    tip_label = case_when(
+      !is.na(genotype) &
+        !is.na(variant) ~
+        paste0(
+          id, "  [", genotype,
+          "  ", variant, "]"
+        ),
+
+      !is.na(genotype) ~
+        paste0(id, "  [", genotype, "]"),
+
+      !is.na(variant) ~
+        paste0(id, "  [", variant, "]"),
+
+      !is.na(community_clade) ~
+        paste0(id, "  [", community_clade, "]"),
+
+      TRUE ~ id
+    ),
+
+    tip_color = case_when(
+      is_query ~ "Query",
+      !is.na(variant) & variant != "" ~ variant,
+      !is.na(genotype) & genotype != "NA" ~ genotype,
+      !is.na(community_clade) ~ community_clade,
+      TRUE ~ "Unknown"
+    )
+  )
+
+      all_colors <- unique(tip_info$tip_color)
+      ref_colors <- setdiff(all_colors, "Query")
+      pal <- setNames(
+        c("#d62728", scales::hue_pal()(length(ref_colors))),
+        c("Query", ref_colors)
+      )
+
+      p <- if (use_cladogram_view) {
+        ggtree(
+          tr,
+          layout = "fan",
+          open.angle = 15,
+          branch.length = "none"
+        ) %<+% tip_info +
+          geom_tippoint(aes(color = tip_color), size = 3) +
+          geom_tiplab(aes(label = tip_label), size = 2.6, align = TRUE, linetype = NA, offset = 0.15) +
+          scale_color_manual(values = pal, name = "Variant") +
+          guides(color = guide_legend(ncol = 2)) +
+          theme_void() +
+          theme(legend.position = "bottom", plot.margin = margin(5, 5, 5, 5))
+      } else {
+        ggtree(
+          tr,
+          layout = "rectangular",
+          branch.length = "branch.length"
+        ) %<+% tip_info +
+          geom_tippoint(aes(color = tip_color), size = 3) +
+          geom_tiplab(aes(label = tip_label), size = 2.8, hjust = -0.05) +
+          scale_color_manual(values = pal, name = "Variant") +
+          guides(color = guide_legend(ncol = 2)) +
+          theme_tree2() +
+          theme(legend.position = "bottom", plot.margin = margin(5, 5, 5, 5)) +
+          hexpand(.6)
+      }
+
+      bs_df <- p$data %>%
+        filter(!isTip, !is.na(label)) %>%
+        mutate(bs_val = suppressWarnings(as.numeric(label))) %>%
+        filter(!is.na(bs_val), bs_val >= 50)
+      if (nrow(bs_df) > 0) {
+        p <- p + geom_text(data = bs_df, aes(x = x, y = y, label = round(bs_val)),
+                           inherit.aes = FALSE,
+                           size = 2.5, hjust = 1.15, vjust = -0.4, color = "grey35")
+      }
+
+      # Persist to output/trees/<seqName>/tree.png (not a tempfile) so it survives after report generation
+      tree_png_path <- file.path(tree_dir, "tree.png")
+      ggsave(tree_png_path, plot = p, width = 18, height = 9, dpi = 150)
+
+      if (!file.exists(tree_png_path)) {
+        stop(
+          "Per-sequence tree figure was not created: ",
+          tree_png_path
+        )
+      }
+
+      .embed_tree(
+        tree_png_path,
+        alt = paste("Phylogenetic tree for", query_id)
+      )
+
+      if (use_cladogram_view) {
+        cat("*Display note:* Large branch-length outliers detected. Tree is shown as a topology-only cladogram for readability; branch lengths are still preserved in `tree.treefile`.\n\n")
+      }
+      cat("\n")
+
+meta_tbl <- tip_info %>%
+  arrange(desc(is_query), tip_color, id) %>%
+  select(
+    ID = id,
+    Variant = variant,
+    Genotype = genotype
+  ) %>%
+  mutate(
+    across(
+      c(Variant, Genotype),
+      ~ if_else(
+        is.na(.x) | .x %in% c("NA", ""),
+        "—",
+        as.character(.x)
+      )
+    )
+  )
+
+      cat(kbl(meta_tbl, caption = paste("Sequences in tree:", query_id)) %>%
+            kable_styling(bootstrap_options = c("striped", "condensed"),
+                          full_width = FALSE, font_size = 11) %>%
+            as.character())
+      cat("\n\n")
+    }
+  }
+
+  # ── 2. SNP distance heatmap ─────────────────────────────────────────────────
+  cat("### SNP distance heatmap\n\n")
+  
+  # Use alignment content as-is.
+  # When aligned_trimmed_blast_only.fa exists, this is already query + selected BLAST neighbors.
+  # For older batches without BLAST-only alignment we keep existing alignment content.
+  seqs_heatmap <- if (!is.null(seqs_raw) && nrow(seqs_raw) > 0) {
+    if (nrow(seqs_raw) >= 2) seqs_raw else NULL
+  } else {
+    NULL
+  }
+  
+  if (is.null(seqs_heatmap) || nrow(seqs_heatmap) < 2) {
+    cat("*Alignment not available or too few sequences.*\n\n")
+  } else {
+    n_tips  <- nrow(seqs_heatmap)
+    ids     <- rownames(seqs_heatmap)
+    snp_mat <- matrix(0L, n_tips, n_tips, dimnames = list(ids, ids))
+    for (i in seq_len(n_tips - 1)) {
+      for (j in (i + 1):n_tips) {
+        s1 <- seqs_heatmap[i, ]; s2 <- seqs_heatmap[j, ]
+        # Count mismatches on all non-gap aligned positions.
+        # This keeps SNP distance closer to BLAST mismatch behavior.
+        valid <- s1 != "-" & s2 != "-"
+        d <- sum(s1[valid] != s2[valid])
+        snp_mat[i, j] <- snp_mat[j, i] <- d
+      }
+    }
+
+    ref_meta_hm <- if (
+  nrow(meta) > 0 &&
+  all(c("id", "variant") %in% names(meta))
+) {
+  meta %>%
+    transmute(
+      id = as.character(id),
+      hm_variant = as.character(variant),
+      hm_genotype = if ("genotype" %in% names(meta)) {
+        as.character(genotype)
+      } else {
+        NA_character_
+      }
+    )
+} else {
+  tibble(
+    id = character(),
+    hm_variant = character(),
+    hm_genotype = character()
+  )
+}
+
+
+    lbl_tbl <- tibble(id = ids) %>%
+      left_join(ref_meta_hm, by = "id") %>%
+      left_join(community_meta, by = "id") %>%
+      mutate(
+        variant  = hm_variant,
+        genotype = coalesce(harmonise_genotype(hm_genotype), community_clade),
+        # Shorten long FASTA headers: extract accession + isolate/strain name
+        # Handles both "isolate XXXX" and "strain: XXXX" formats
+        # E.g., "KX151409.1 Hepatovirus A isolate h737 ..." → "KX151409.1 (h737)"
+        # E.g., "LC035017.1 Hepatitis A virus gene for polyprotein, partial cds, strain: 1404-20055-WakymC-4HA42" → "LC035017.1 (1404-20055-WakymC-4HA42)"
+        short_id = {
+          accession <- str_extract(id, "^[^\\s]+")
+          # Extract isolate/strain name: try "isolate" pattern, then "strain:" pattern
+          isolate_m1 <- str_extract(id, "(?<= isolate )[^ ,]+")
+          isolate_m2 <- str_extract(id, "(?<=strain: )[^ ,]+")
+          isolate_part <- coalesce(isolate_m1, isolate_m2)
+          
+          if_else(!is.na(isolate_part),
+                 paste0(accession, " (", isolate_part, ")"),
+                 accession)
+        },
+        display = case_when(
+  id == query_id ~
+    paste0(short_id, "  \u2605"),
+
+  !is.na(genotype) &
+    !is.na(variant) ~
+    paste0(
+      short_id, "  [", genotype,
+      "  ", variant, "]"
+    ),
+
+  !is.na(genotype) ~
+    paste0(short_id, "  [", genotype, "]"),
+
+  !is.na(variant) ~
+    paste0(short_id, "  [", variant, "]"),
+
+  TRUE ~ short_id
+)
+      )
+    lbl_map <- setNames(lbl_tbl$display, lbl_tbl$id)
+    rownames(snp_mat) <- lbl_map[rownames(snp_mat)]
+    colnames(snp_mat) <- lbl_map[colnames(snp_mat)]
+
+    query_lbl <- lbl_map[query_id]
+    ann_row <- data.frame(
+      Type = ifelse(rownames(snp_mat) == query_lbl, "Query", "Reference"),
+      row.names = rownames(snp_mat)
+    )
+    ann_colors <- list(Type = c(Query = "#d62728", Reference = "#aec7e8"))
+
+    # Adaptive sizing: base cell size on number of sequences
+    # Ensures readable labels and numbers even with many sequences
+    cell_size <- if (n_tips <= 10) 60 else if (n_tips <= 20) 45 else 30
+    fontsize_main <- if (n_tips <= 10) 15 else if (n_tips <= 20) 14 else 13
+    fontsize_num <- if (n_tips <= 10) 12 else if (n_tips <= 20) 11 else 10
+    fontsize_row <- if (n_tips <= 15) 13 else 11
+    
+    # Calculate figure size with minimum/maximum constraints
+    px <- min(18, max(10, n_tips * (cell_size / 35)))
+    
+    # Continuous blue palette for SNP distances
+color_func <- colorRampPalette(
+  c(
+    "#f7fbff",
+    "#deebf7",
+    "#9ecae1",
+    "#3182bd",
+    "#08519c",
+    "#08306b"
+  )
+)(100)
+
+# Keep only finite values when determining the colour scale
+finite_snp_values <- as.numeric(snp_mat)
+finite_snp_values <- finite_snp_values[is.finite(finite_snp_values)]
+
+if (length(finite_snp_values) == 0) {
+  cat("*SNP matrix contains no finite values and cannot be plotted.*\n\n")
+} else {
+  snp_min <- min(finite_snp_values)
+  snp_max <- max(finite_snp_values)
+  constant_snp_matrix <- snp_min == snp_max
+
+  if (constant_snp_matrix) {
+    # pheatmap requires unique break values.
+    # Add a small interval around the single observed value.
+    heat_breaks <- seq(
+      from = snp_min - 0.5,
+      to = snp_max + 0.5,
+      length.out = length(color_func) + 1
+    )
+
+    cluster_rows <- FALSE
+    cluster_cols <- FALSE
+    heat_treeheight_row <- 0
+    heat_treeheight_col <- 0
+  } else {
+    heat_breaks <- seq(
+      from = snp_min,
+      to = snp_max,
+      length.out = length(color_func) + 1
+    )
+
+    cluster_rows <- TRUE
+    cluster_cols <- TRUE
+    heat_treeheight_row <- 100
+    heat_treeheight_col <- 100
+  }
+
+  # Defensive check: pheatmap/cut requires strictly unique breaks
+  heat_breaks <- unique(heat_breaks)
+
+  if (length(heat_breaks) < 2) {
+    heat_breaks <- c(snp_min - 0.5, snp_max + 0.5)
+  }
+
+  safe_query_filename <- gsub(
+  "[^A-Za-z0-9._-]",
+  "_",
+  query_id
+)
+
+heatmap_png <- file.path(
+  report_figures_dir,
+  paste0(safe_query_filename, "_snp_heatmap.png")
+)
+
+  .ph_obj <- pheatmap(
+    snp_mat,
+    color = color_func,
+    breaks = heat_breaks,
+    cluster_rows = cluster_rows,
+    cluster_cols = cluster_cols,
+    clustering_distance_rows = as.dist(snp_mat),
+    clustering_distance_cols = as.dist(snp_mat),
+    clustering_method = "average",
+    display_numbers = TRUE,
+    number_format = "%d",
+    number_color = "black",
+    fontsize = fontsize_main,
+    fontsize_number = fontsize_num,
+    fontsize_row = fontsize_row,
+    annotation_row = ann_row,
+    annotation_colors = ann_colors,
+    legend = !constant_snp_matrix,
+    main = paste("Pairwise SNP distances —", query_id),
+    treeheight_row = heat_treeheight_row,
+    treeheight_col = heat_treeheight_col,
+    border_color = "#cccccc",
+    gaps_row = which(rownames(snp_mat) == query_lbl),
+    gaps_col = which(colnames(snp_mat) == query_lbl),
+    silent = TRUE
+  )
+
+  ggsave(
+    heatmap_png,
+    plot = .ph_obj$gtable,
+    width = px,
+    height = px,
+    dpi = 150,
+    limitsize = FALSE
+  )
+
+  if (!file.exists(heatmap_png)) {
+  stop("SNP heatmap was not created: ", heatmap_png)
+}
+
+.embed_img(heatmap_png)
+
+  if (constant_snp_matrix) {
+    cat(
+      sprintf(
+        "*All pairwise SNP distances are %s. Clustering was disabled because the matrix is constant.*\n\n",
+        snp_min
+      )
+    )
+  }
+}
+    
+    # Save SNP distance matrix as TSV for external analysis
+    snp_tsv <- file.path(out_dir, "snp_matrices", paste0(query_id, "_snp_distances.tsv"))
+    dir.create(dirname(snp_tsv), showWarnings = FALSE, recursive = TRUE)
+    
+    # Convert matrix to data frame with sequence IDs in first column
+    snp_df <- as.data.frame(snp_mat)
+    snp_df <- tibble::rownames_to_column(snp_df, var = "Sequence_1")
+    names(snp_df)[-1] <- rownames(snp_mat)  # Ensure column names are sequence labels
+    
+    write_tsv(snp_df, snp_tsv)
+    cat("[Download SNP distance matrix](snp_matrices/", query_id, "_snp_distances.tsv)\n\n", sep = "")
+    
+    cat("\n\n")
+  } # end SNP heatmap display
+} # end for each query
+} # end tree/alignment availability check
+
+```
+---
+
+# 3. Variant naming
+
+```{r variant-naming, results='asis'}
+# Extract year from dataset_date parameter (format: YYYY-MM-DD)
+dataset_year <- as.numeric(substr(params$dataset_date, 1, 4))
+# Year for variant naming (might change at new year)
+variant_year <- as.numeric(format(Sys.Date(), "%Y"))
+
+# Check latest variant in database by NOR-YYYY pattern
+if (nrow(meta) > 0 && "variant" %in% names(meta)) {
+  db_variant <- meta %>%
+    filter(
+      !is.na(variant), 
+      variant !="",
+      grepl("^NOR-", variant)
+      ) %>%
+    pull(variant) %>%
+    unique()
+  
+  current_year_variant <- db_variant[grepl(paste0("^NOR-", variant_year), db_variant)]
+  if (length(current_year_variant) > 0) {
+    # Extract version numbers (V1, V2, etc.) and sort numerically
+    # Pattern: NOR-YYYY-VNN[a-z]? → extract NN part
+    base_versions <- as.numeric(gsub("^NOR-[0-9]+-V([0-9]+).*", "\\1", current_year_variant))
+    latest_v <- max(base_versions, na.rm = TRUE)
+    next_v <- latest_v + 1
+  } else {
+    latest_v <- 0
+    next_v <- 1
+  }
+  
+  # Show recent variants grouped by base version with b/c suffixes
+  # Sort by year descending, then version number numerically
+  cat("**Recent variants in database:**\n\n")
+  
+  # Parse variants to extract base version and suffix
+  variant_parsed <- tibble(variant = unique(db_variant)) %>%
+    filter(grepl("^NOR-", variant)) %>%
+    mutate(
+      # Extract year from variant (NOR-YYYY-Vx → YYYY)
+      year = as.numeric(str_extract(variant, "NOR-([0-9]+)", group = 1)),
+      # Extract version full (V1, V1b, etc.)
+      version_full = str_extract(variant, "V[0-9]+[a-z]*"),
+      # Extract base version number
+      base_v = as.numeric(str_extract(version_full, "[0-9]+"))
+    ) %>%
+    distinct(year, base_v, .keep_all = TRUE) %>%  # Keep only unique year+base_v combinations
+    arrange(desc(year), desc(base_v)) %>%
+    head(10) %>%  # Get top 10 most recent base versions
+    arrange(year, base_v)  # Sort for display: oldest to newest
+  
+  # Group and display by year, then by base version (oldest to newest for display)
+  for (yr in unique(sort(variant_parsed$year))) {
+    year_data <- variant_parsed %>% filter(year == yr)
+    cat("**NOR-", yr, ":**", sep = "")
+    # Collect all variants for each base_v and display on same line
+    variants_by_base <- list()
+    for (bv in unique(sort(year_data$base_v))) {
+      variants <- year_data %>%
+        filter(base_v == bv) %>%
+        pull(variant) %>%
+        sort()
+      variants_by_base[[as.character(bv)]] <- variants
+    }
+    # Display: V1 [V1b] format or V1 [no variants]
+    display_str <- paste(sapply(names(variants_by_base), function(v) {
+      base <- paste0("NOR-", yr, "-V", v)
+      all_vars <- variants_by_base[[v]]
+      suffixed <- all_vars[grepl("[a-z]$", all_vars)]
+      if (length(suffixed) > 0) {
+        paste0(base, " [", paste(sub(base, "", suffixed), collapse = ", "), "]")
+      } else {
+        base
+      }
+    }), collapse = ", ")
+    cat(" ", display_str, "\n", sep = "")
+  }
+  cat("\n")
+  
+  cat(sprintf("**Latest NOR-%d variant: V%d, next candidate: V%d**\n\n", variant_year, latest_v, next_v))
+} else {
+  cat("*Unable to determine variant naming scheme — no variant data in reference database.*\n\n")
+}
+
+# Build variant suggestions table with smart b/c suffix suggestion
+if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
+  # Function to suggest next available suffix (b, c, d, etc.)
+  suggest_suffix <- function(base_variant, existing_variants) {
+    # Get all variants of this variant in the database
+    variants <- existing_variants[grepl(paste0("^", base_variant, "[a-z]?$"), existing_variants)]
+    
+    if (length(variants) == 0) {
+      # No variant exists, suggest 'b'
+      return("b")
+    }
+    
+    # Extract which suffixes exist
+    suffixes <- str_extract(variants, "[a-z]$")
+    suffixes <- suffixes[!is.na(suffixes)]
+    
+    n_suffixes <- length(suffixes)
+    if (n_suffixes == 0) {
+      # Base exists without suffixes, next is 'b'
+      return("b")
+    }
+    
+    # Suggest next letter after highest existing suffix
+    if (n_suffixes > 0) {
+      highest_suffix <- sort(suffixes, decreasing = TRUE)[1]
+      highest_code <- as.numeric(charToRaw(highest_suffix))
+      next_suffix <- rawToChar(as.raw(highest_code + 1))
+      return(next_suffix)
+    }
+    
+    return("b")
+  }
+  
+
+  all_db_variants <- meta %>%
+  filter(!is.na(variant), variant != "") %>%
+  pull(variant) %>%
+  unique()
+  
+  variant_suggestions <- summary_tbl %>%
+    select(seqName, clade, blast_genotype, blast_variant, blast_mismatch, sseqid) %>%
+    mutate(
+      variant_suggestion = case_when(
+        !is.na(blast_mismatch) & blast_mismatch == 0 & !is.na(blast_variant) ~ blast_variant,
+        !is.na(blast_mismatch) & blast_mismatch == 1 & !is.na(blast_variant) ~ {
+          suggested_suffix <- suggest_suffix(blast_variant, all_db_variants)
+          paste0(blast_variant, suggested_suffix, " (1 SNP diff)")
+        },
+        !is.na(blast_mismatch) & blast_mismatch == 2 & !is.na(blast_variant) ~ {
+          suggested_suffix <- suggest_suffix(blast_variant, all_db_variants)
+          paste0(blast_variant, suggested_suffix, " (2 SNP diff)")
+        },
+        is.na(blast_variant) ~ "No BLAST hit — needs manual assignment",
+        TRUE ~ "Review: >2 SNP difference from best hit"
+      ),
+      notes = case_when(
+        !is.na(blast_mismatch) & blast_mismatch == 0 ~ "Identical to database sequence",
+        !is.na(blast_mismatch) & blast_mismatch <= 2 ~ paste("Close to", sseqid),
+        TRUE ~ ""
+      )
+    ) %>%
+    select(
+      Sequence = seqName,
+      Genotype = clade,
+      `BLAST hit` = sseqid,
+      `SNPs` = blast_mismatch,
+      `Hit variant` = blast_variant,
+      `Suggested variant` = variant_suggestion,
+      Notes = notes
+    )
+  
+  cat(variant_suggestions %>%
+        kbl(escape = FALSE) %>%
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
+        as.character())
+} else {
+  cat("*No sequences for variant naming.*\n\n")
+}
+```
+
+**Variant naming protocol:**
+- **Identical to database (0 SNPs):** Assign same variant as BLAST hit
+- **1-2 SNPs from database sequence:** Check database for existing b/c suffixes, suggest next available (e.g., b if none exist, c if b exists)
+- **>2 SNPs:** Manual review required; may warrant new variant number
 
 ---
 
@@ -271,7 +2311,7 @@ if (length(batch_seqs_in_alignment) < 2) {
       theme_tree2() +
       theme(legend.position = "bottom") +
       hexpand(.6) +
-      labs(title = sprintf("Batch %s â€” Phylogenetic tree (batch samples only)", batch_name),
+      labs(title = sprintf("Batch %s — Phylogenetic tree (batch samples only)", batch_name),
            subtitle = "Phylogenetic relationships among batch sequences")
     
     batch_tree_png <- file.path(
@@ -509,177 +2549,6 @@ if (!file.exists(batch_heatmap_png)) {
 
 ---
 
-# 3. Variant naming
-
-```{r variant-naming, results='asis'}
-# Extract year from dataset_date parameter (format: YYYY-MM-DD)
-dataset_year <- as.numeric(substr(params$dataset_date, 1, 4))
-# Year for variant naming (might change at new year)
-variant_year <- as.numeric(format(Sys.Date(), "%Y"))
-
-# Check latest variant in database by NOR-YYYY pattern
-if (nrow(meta) > 0 && "variant" %in% names(meta)) {
-  db_variant <- meta %>%
-    filter(
-      !is.na(variant), 
-      variant !="",
-      grepl("^NOR-", variant)
-      ) %>%
-    pull(variant) %>%
-    unique()
-  
-  current_year_variant <- db_variant[grepl(paste0("^NOR-", variant_year), db_variant)]
-  if (length(current_year_variant) > 0) {
-    # Extract version numbers (V1, V2, etc.) and sort numerically
-    # Pattern: NOR-YYYY-VNN[a-z]? â†’ extract NN part
-    base_versions <- as.numeric(gsub("^NOR-[0-9]+-V([0-9]+).*", "\\1", current_year_variant))
-    latest_v <- max(base_versions, na.rm = TRUE)
-    next_v <- latest_v + 1
-  } else {
-    latest_v <- 0
-    next_v <- 1
-  }
-  
-  # Show recent variants grouped by base version with b/c suffixes
-  # Sort by year descending, then version number numerically
-  cat("**Recent variants in database:**\n\n")
-  
-  # Parse variants to extract base version and suffix
-  variant_parsed <- tibble(variant = unique(db_variant)) %>%
-    filter(grepl("^NOR-", variant)) %>%
-    mutate(
-      # Extract year from variant (NOR-YYYY-Vx â†’ YYYY)
-      year = as.numeric(str_extract(variant, "NOR-([0-9]+)", group = 1)),
-      # Extract version full (V1, V1b, etc.)
-      version_full = str_extract(variant, "V[0-9]+[a-z]*"),
-      # Extract base version number
-      base_v = as.numeric(str_extract(version_full, "[0-9]+"))
-    ) %>%
-    distinct(year, base_v, .keep_all = TRUE) %>%  # Keep only unique year+base_v combinations
-    arrange(desc(year), desc(base_v)) %>%
-    head(10) %>%  # Get top 10 most recent base versions
-    arrange(year, base_v)  # Sort for display: oldest to newest
-  
-  # Group and display by year, then by base version (oldest to newest for display)
-  for (yr in unique(sort(variant_parsed$year))) {
-    year_data <- variant_parsed %>% filter(year == yr)
-    cat("**NOR-", yr, ":**", sep = "")
-    # Collect all variants for each base_v and display on same line
-    variants_by_base <- list()
-    for (bv in unique(sort(year_data$base_v))) {
-      variants <- year_data %>%
-        filter(base_v == bv) %>%
-        pull(variant) %>%
-        sort()
-      variants_by_base[[as.character(bv)]] <- variants
-    }
-    # Display: V1 [V1b] format or V1 [no variants]
-    display_str <- paste(sapply(names(variants_by_base), function(v) {
-      base <- paste0("NOR-", yr, "-V", v)
-      all_vars <- variants_by_base[[v]]
-      suffixed <- all_vars[grepl("[a-z]$", all_vars)]
-      if (length(suffixed) > 0) {
-        paste0(base, " [", paste(sub(base, "", suffixed), collapse = ", "), "]")
-      } else {
-        base
-      }
-    }), collapse = ", ")
-    cat(" ", display_str, "\n", sep = "")
-  }
-  cat("\n")
-  
-  cat(sprintf("**Latest NOR-%d variant: V%d, next candidate: V%d**\n\n", variant_year, latest_v, next_v))
-} else {
-  cat("*Unable to determine variant naming scheme â€” no variant data in reference database.*\n\n")
-}
-
-# Build variant suggestions table with smart b/c suffix suggestion
-if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
-  # Function to suggest next available suffix (b, c, d, etc.)
-  suggest_suffix <- function(base_variant, existing_variants) {
-    # Get all variants of this variant in the database
-    variants <- existing_variants[grepl(paste0("^", base_variant, "[a-z]?$"), existing_variants)]
-    
-    if (length(variants) == 0) {
-      # No variant exists, suggest 'b'
-      return("b")
-    }
-    
-    # Extract which suffixes exist
-    suffixes <- str_extract(variants, "[a-z]$")
-    suffixes <- suffixes[!is.na(suffixes)]
-    
-    n_suffixes <- length(suffixes)
-    if (n_suffixes == 0) {
-      # Base exists without suffixes, next is 'b'
-      return("b")
-    }
-    
-    # Suggest next letter after highest existing suffix
-    if (n_suffixes > 0) {
-      highest_suffix <- sort(suffixes, decreasing = TRUE)[1]
-      highest_code <- as.numeric(charToRaw(highest_suffix))
-      next_suffix <- rawToChar(as.raw(highest_code + 1))
-      return(next_suffix)
-    }
-    
-    return("b")
-  }
-  
-
-  all_db_variants <- meta %>%
-  filter(!is.na(variant), variant != "") %>%
-  pull(variant) %>%
-  unique()
-  
-  variant_suggestions <- summary_tbl %>%
-    select(seqName, clade, blast_genotype, blast_variant, blast_mismatch, sseqid) %>%
-    mutate(
-      variant_suggestion = case_when(
-        !is.na(blast_mismatch) & blast_mismatch == 0 & !is.na(blast_variant) ~ blast_variant,
-        !is.na(blast_mismatch) & blast_mismatch == 1 & !is.na(blast_variant) ~ {
-          suggested_suffix <- suggest_suffix(blast_variant, all_db_variants)
-          paste0(blast_variant, suggested_suffix, " (1 SNP diff)")
-        },
-        !is.na(blast_mismatch) & blast_mismatch == 2 & !is.na(blast_variant) ~ {
-          suggested_suffix <- suggest_suffix(blast_variant, all_db_variants)
-          paste0(blast_variant, suggested_suffix, " (2 SNP diff)")
-        },
-        is.na(blast_variant) ~ "No BLAST hit â€” needs manual assignment",
-        TRUE ~ "Review: >2 SNP difference from best hit"
-      ),
-      notes = case_when(
-        !is.na(blast_mismatch) & blast_mismatch == 0 ~ "Identical to database sequence",
-        !is.na(blast_mismatch) & blast_mismatch <= 2 ~ paste("Close to", sseqid),
-        TRUE ~ ""
-      )
-    ) %>%
-    select(
-      Sequence = seqName,
-      Genotype = clade,
-      `BLAST hit` = sseqid,
-      `SNPs` = blast_mismatch,
-      `Hit variant` = blast_variant,
-      `Suggested variant` = variant_suggestion,
-      Notes = notes
-    )
-  
-  cat(variant_suggestions %>%
-        kbl(escape = FALSE) %>%
-        kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
-        as.character())
-} else {
-  cat("*No sequences for variant naming.*\n\n")
-}
-```
-
-**Variant naming protocol:**
-- **Identical to database (0 SNPs):** Assign same variant as BLAST hit
-- **1-2 SNPs from database sequence:** Check database for existing b/c suffixes, suggest next available (e.g., b if none exist, c if b exists)
-- **>2 SNPs:** Manual review required; may warrant new variant number
-
----
-
 # 4. Outbreak detection
 
 ```{r outbreak-detection, results='asis'}
@@ -852,12 +2721,12 @@ if (nrow(outbreak_candidates) == 0) {
     filter(n_total >= 3)
   
   if (nrow(outbreak_candidates_table) == 0) {
-    cat("*No variants with â‰¥2 total sequences detected in batch.*\n\n")
+    cat("*No variants with ≥2 total sequences detected in batch.*\n\n")
   } else {
-    cat(sprintf("**Variants in batch:** %d variant group(s) with â‰¥2 total sequences\n\n", nrow(outbreak_candidates_table)))
+    cat(sprintf("**Variants in batch:** %d variant group(s) with ≥2 total sequences\n\n", nrow(outbreak_candidates_table)))
     
     # Summary table 
-    cat("**Variant overview (â‰¥2 sequences):**\n\n")
+    cat("**Variant overview (≥2 sequences):**\n\n")
     outbreak_display <- outbreak_candidates_table %>%
       select(
         `Variant` = base_variant,
@@ -981,627 +2850,6 @@ if (nrow(db_seqs_for_variant) > 0) {
 
 ---
 
-# 5. BLAST analysis detail {.tabset}
-
-## Top hits per sequence
-
-```{r blast-detail}
-if (nrow(blast_top) > 0) {
-  blast_top %>%
-    filter(hit_rank <= 10) %>%
-    select(
-      Query = qseqid,
-      Rank = hit_rank,
-      Hit = sseqid,
-      `% identity` = pident,
-      `Query cov%` = qcovs,
-      SNPs = mismatch,
-      Bitscore = bitscore,
-      Genotype = hit_genotype,
-      Variant = hit_variant
-    ) %>%
-    mutate(
-      `% identity` = round(`% identity`, 2),
-      Genotype = replace_na(as.character(Genotype), "â€”"),
-      Variant = replace_na(as.character(Variant), "â€”")
-    ) %>%
-    kbl() %>%
-    kable_styling(
-      bootstrap_options = c("striped", "hover", "condensed"),
-      full_width = TRUE
-    ) %>%
-    scroll_box(height = "500px")
-} else {
-  cat("No BLAST results found.")
-}
-
-```
----
-
-# 6. Per-sequence details {.tabset}
-
-## {.unlisted .unnumbered}
-
-```{r per-seq-details, results='asis'}
-suppressPackageStartupMessages({
-  library(pheatmap)
-  library(ggmsa)
-})
-
-# â”€â”€ Shared setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-ref_meta <- meta %>%
-  select(id, genotype, variant) %>%
-  mutate(
-    id_norm = norm_id(id),
-    genotype = str_to_upper(genotype),
-    variant = if_else(
-      is.na(variant) | variant == "",
-      NA_character_,
-      variant
-    )
-  )
-
-query_ids <- summary_tbl$seqName
-called    <- c("a", "c", "g", "t")
-
-# Normalize query IDs to match tree directory names (first token only, trimmed)
-query_ids_normalized <- word(query_ids, 1)
-
-.is_called <- function(x) {
-  x %in% called
-}
-
-.consensus_base <- function(col) {
-  vals <- col[.is_called(col)]
-  if (length(vals) == 0) return(NA_character_)
-  tab <- sort(table(vals), decreasing = TRUE)
-  names(tab)[1]
-}
-
-.col_entropy <- function(col) {
-  vals <- col[.is_called(col)]
-  if (length(vals) == 0) return(NA_real_)
-  p <- as.numeric(table(vals)) / length(vals)
-  -sum(p * log2(p))
-}
-
-.roll_mean <- function(x, k = 15) {
-  n <- length(x)
-  if (n == 0) return(numeric(0))
-  k <- max(1L, as.integer(k))
-  h <- floor(k / 2)
-  sapply(seq_len(n), function(i) {
-    lo <- max(1L, i - h)
-    hi <- min(n, i + h)
-    mean(x[lo:hi], na.rm = TRUE)
-  })
-}
-
-.rescale01 <- function(x) {
-  rng <- range(x, na.rm = TRUE)
-  if (!all(is.finite(rng)) || diff(rng) == 0) return(rep(0, length(x)))
-  (x - rng[1]) / diff(rng)
-}
-
-.pick_zoom_windows <- function(score, n_windows = 5, width = 35) {
-  if (length(score) == 0 || all(!is.finite(score))) {
-    return(tibble(start = integer(), end = integer(), center = integer(), score = double()))
-  }
-  width <- max(5L, as.integer(width))
-  half  <- floor(width / 2)
-  ord   <- order(score, decreasing = TRUE, na.last = NA)
-  chosen <- integer()
-  for (idx in ord) {
-    if (length(chosen) >= n_windows) break
-    if (length(chosen) == 0 || all(abs(idx - chosen) > width)) {
-      chosen <- c(chosen, idx)
-    }
-  }
-  if (length(chosen) == 0) {
-    return(tibble(start = integer(), end = integer(), center = integer(), score = double()))
-  }
-  tibble(
-    center = chosen,
-    start  = pmax(1L, chosen - half),
-    end    = pmin(length(score), chosen + half),
-    score  = score[chosen]
-  ) %>%
-    arrange(desc(score))
-}
-
-treefile_exists <- sapply(query_ids_normalized, function(id) file.exists(file.path(trees_dir, id, "tree.treefile")))
-aln_exists <- sapply(query_ids_normalized, function(id) {
-  # Prefer BLAST-only alignment if available, otherwise fall back to full alignment
-  blast_only <- file.exists(file.path(trees_dir, id, "aligned_trimmed_blast_only.fa"))
-  full_aln <- file.exists(file.path(trees_dir, id, paste0(id, ".aligned_trimmed.fasta")))
-  blast_only || full_aln
-})
-
-if (length(query_ids) == 0) {
-  cat("## Status\n\n")
-  cat("*No sequences available in summary table for per-sequence details.*\n\n")
-} else if (!any(treefile_exists) && !any(aln_exists)) {
-  cat("## Status\n\n")
-  cat("Per-sequence tree outputs are not present for this batch, so detailed tree/alignment panels are skipped.\n\n")
-
-  status_tbl <- tibble(
-    Sequence = query_ids,
-    `Tree file` = if_else(treefile_exists, "Found", "Missing"),
-    `Tree alignment` = if_else(aln_exists, "Found", "Missing")
-  )
-
-  cat(kbl(status_tbl, caption = "Per-sequence tree artifacts") %>%
-        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
-                      full_width = TRUE) %>%
-        as.character())
-  cat("\n\n")
-
-  cat("Run this first (from project root) to populate section 6:\n\n")
-  cat("```bash\n")
-  cat(sprintf("bash scripts/build_per_seq_trees.sh %s %s\n", params$batch_dir, params$dataset_date))
-  cat("```\n\n")
-  cat("Short-region alignment inspection is still available in section 0 under **Junction alignment (focused viewer)**.\n\n")
-} else { # tree or alignment files are available
-for (i in seq_along(query_ids)) {
-  query_id <- query_ids[i]
-  query_id_norm <- query_ids_normalized[i]
-  cat(paste0("\n## ", query_id, "\n\n"))
-
-  tree_dir <- file.path(trees_dir, query_id_norm)
-  # Prefer BLAST-only alignment if available, otherwise fall back to full alignment
-  aln_file <- if (file.exists(file.path(tree_dir, "aligned_trimmed_blast_only.fa"))) {
-    file.path(tree_dir, "aligned_trimmed_blast_only.fa")
-  } else {
-    file.path(tree_dir, paste0(query_id_norm, ".aligned_trimmed.fasta"))
-  }
-  treefile <- file.path(tree_dir, "tree.treefile")
-  tr <- NULL
-
-  # Read alignment once â€” used by both SNP and MSA sections
-  seqs_raw <- if (file.exists(aln_file)) {
-    tryCatch(ape::read.dna(aln_file, format = "fasta", as.character = TRUE),
-             error = function(e) NULL)
-  } else NULL
-  # The saved .aligned.fasta/.aligned_trimmed.fasta files mark the query header
-  # with a trailing " [QUERY]" for readability â€” strip it back off so all the
-  # exact-match comparisons against query_id below keep working unchanged.
-  if (!is.null(seqs_raw)) {
-    rownames(seqs_raw) <- sub(" \\[QUERY\\]$", "", rownames(seqs_raw))
-  }
-  # Defensive: duplicate FASTA headers (e.g. from an older alignment generated
-  # before the batch FASTA duplicate-header guard) would otherwise crash
-  # data.frame() further down with "duplicate row.names". Keep the first
-  # occurrence's name intact (so query_id matching still works) and suffix
-  # any repeats instead of failing the whole report.
-  if (!is.null(seqs_raw) && anyDuplicated(rownames(seqs_raw)) > 0) {
-    dup_ids <- unique(rownames(seqs_raw)[duplicated(rownames(seqs_raw))])
-    cat(sprintf("*Warning: duplicate sequence header(s) in alignment (%s) â€” extra copies were renamed for display.*\n\n",
-                paste(dup_ids, collapse = ", ")))
-    rownames(seqs_raw) <- make.unique(rownames(seqs_raw))
-  }
-
-  # â”€â”€ 1. Phylogenetic tree â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  cat("### Phylogenetic tree\n\n")
-  if (!file.exists(treefile)) {
-    cat("*Tree not available â€” run `build_per_seq_trees.sh` first.*\n\n")
-  } else {
-    tr <- tryCatch(read.tree(treefile), error = function(e) NULL)
-    if (is.null(tr)) {
-      cat("*Could not parse tree.*\n\n")
-    } else {
-      tr <- phangorn::midpoint(tr)
-
-      # If one/few branches are extreme outliers, branch-length plotting can
-      # visually collapse the rest of the tree. In that case, switch to a
-      # topology-only view for readability.
-      # The ratio alone is misleading for tight clusters (near-zero median
-      # branch length inflates the ratio even when the longest branch is
-      # small in absolute terms), so also require a genuinely large absolute
-      # branch length before falling back to the cladogram view.
-      edge_len <- tr$edge.length
-      edge_len <- edge_len[is.finite(edge_len) & !is.na(edge_len) & edge_len > 0]
-      long_branch_ratio <- if (length(edge_len) > 0) {
-        max(edge_len) / max(median(edge_len), 1e-6)
-      } else {
-        1
-      }
-      max_edge_len <- if (length(edge_len) > 0) max(edge_len) else 0
-      # Disabled for now â€” always render as a phylogram with real branch lengths.
-      # use_cladogram_view <- long_branch_ratio > 25 && max_edge_len > 0.05
-      use_cladogram_view <- FALSE
-
-tip_info <- tibble(id = tr$tip.label) %>%
-  left_join(
-    ref_meta %>%
-      select(id_norm, genotype, variant),
-    by = c("id" = "id_norm")
-  ) %>%
-  left_join(
-    community_meta,
-    by = "id"
-  ) %>%
-  mutate(
-    genotype = coalesce(
-      genotype,
-      community_clade
-    ),
-
-    is_query = id == query_id,
-
-    tip_label = case_when(
-      !is.na(genotype) &
-        !is.na(variant) ~
-        paste0(
-          id, "  [", genotype,
-          "  ", variant, "]"
-        ),
-
-      !is.na(genotype) ~
-        paste0(id, "  [", genotype, "]"),
-
-      !is.na(variant) ~
-        paste0(id, "  [", variant, "]"),
-
-      !is.na(community_clade) ~
-        paste0(id, "  [", community_clade, "]"),
-
-      TRUE ~ id
-    ),
-
-    tip_color = case_when(
-      is_query ~ "Query",
-      !is.na(variant) & variant != "" ~ variant,
-      !is.na(genotype) & genotype != "NA" ~ genotype,
-      !is.na(community_clade) ~ community_clade,
-      TRUE ~ "Unknown"
-    )
-  )
-
-      all_colors <- unique(tip_info$tip_color)
-      ref_colors <- setdiff(all_colors, "Query")
-      pal <- setNames(
-        c("#d62728", scales::hue_pal()(length(ref_colors))),
-        c("Query", ref_colors)
-      )
-
-      p <- if (use_cladogram_view) {
-        ggtree(
-          tr,
-          layout = "fan",
-          open.angle = 15,
-          branch.length = "none"
-        ) %<+% tip_info +
-          geom_tippoint(aes(color = tip_color), size = 3) +
-          geom_tiplab(aes(label = tip_label), size = 2.6, align = TRUE, linetype = NA, offset = 0.15) +
-          scale_color_manual(values = pal, name = "Variant") +
-          guides(color = guide_legend(ncol = 2)) +
-          theme_void() +
-          theme(legend.position = "bottom", plot.margin = margin(5, 5, 5, 5))
-      } else {
-        ggtree(
-          tr,
-          layout = "rectangular",
-          branch.length = "branch.length"
-        ) %<+% tip_info +
-          geom_tippoint(aes(color = tip_color), size = 3) +
-          geom_tiplab(aes(label = tip_label), size = 2.8, hjust = -0.05) +
-          scale_color_manual(values = pal, name = "Variant") +
-          guides(color = guide_legend(ncol = 2)) +
-          theme_tree2() +
-          theme(legend.position = "bottom", plot.margin = margin(5, 5, 5, 5)) +
-          hexpand(.6)
-      }
-
-      bs_df <- p$data %>%
-        filter(!isTip, !is.na(label)) %>%
-        mutate(bs_val = suppressWarnings(as.numeric(label))) %>%
-        filter(!is.na(bs_val), bs_val >= 50)
-      if (nrow(bs_df) > 0) {
-        p <- p + geom_text(data = bs_df, aes(x = x, y = y, label = round(bs_val)),
-                           inherit.aes = FALSE,
-                           size = 2.5, hjust = 1.15, vjust = -0.4, color = "grey35")
-      }
-
-      # Persist to output/trees/<seqName>/tree.png (not a tempfile) so it survives after report generation
-      tree_png_path <- file.path(tree_dir, "tree.png")
-      ggsave(tree_png_path, plot = p, width = 18, height = 9, dpi = 150)
-
-      if (!file.exists(tree_png_path)) {
-        stop(
-          "Per-sequence tree figure was not created: ",
-          tree_png_path
-        )
-      }
-
-      .embed_tree(
-        tree_png_path,
-        alt = paste("Phylogenetic tree for", query_id)
-      )
-
-      if (use_cladogram_view) {
-        cat("*Display note:* Large branch-length outliers detected. Tree is shown as a topology-only cladogram for readability; branch lengths are still preserved in `tree.treefile`.\n\n")
-      }
-      cat("\n")
-
-meta_tbl <- tip_info %>%
-  arrange(desc(is_query), tip_color, id) %>%
-  select(
-    ID = id,
-    Variant = variant,
-    Genotype = genotype
-  ) %>%
-  mutate(
-    across(
-      c(Variant, Genotype),
-      ~ if_else(
-        is.na(.x) | .x %in% c("NA", ""),
-        "â€”",
-        as.character(.x)
-      )
-    )
-  )
-
-      cat(kbl(meta_tbl, caption = paste("Sequences in tree:", query_id)) %>%
-            kable_styling(bootstrap_options = c("striped", "condensed"),
-                          full_width = FALSE, font_size = 11) %>%
-            as.character())
-      cat("\n\n")
-    }
-  }
-
-  # â”€â”€ 2. SNP distance heatmap â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  cat("### SNP distance heatmap\n\n")
-  
-  # Use alignment content as-is.
-  # When aligned_trimmed_blast_only.fa exists, this is already query + selected BLAST neighbors.
-  # For older batches without BLAST-only alignment we keep existing alignment content.
-  seqs_heatmap <- if (!is.null(seqs_raw) && nrow(seqs_raw) > 0) {
-    if (nrow(seqs_raw) >= 2) seqs_raw else NULL
-  } else {
-    NULL
-  }
-  
-  if (is.null(seqs_heatmap) || nrow(seqs_heatmap) < 2) {
-    cat("*Alignment not available or too few sequences.*\n\n")
-  } else {
-    n_tips  <- nrow(seqs_heatmap)
-    ids     <- rownames(seqs_heatmap)
-    snp_mat <- matrix(0L, n_tips, n_tips, dimnames = list(ids, ids))
-    for (i in seq_len(n_tips - 1)) {
-      for (j in (i + 1):n_tips) {
-        s1 <- seqs_heatmap[i, ]; s2 <- seqs_heatmap[j, ]
-        # Count mismatches on all non-gap aligned positions.
-        # This keeps SNP distance closer to BLAST mismatch behavior.
-        valid <- s1 != "-" & s2 != "-"
-        d <- sum(s1[valid] != s2[valid])
-        snp_mat[i, j] <- snp_mat[j, i] <- d
-      }
-    }
-
-    ref_meta_hm <- if (
-  nrow(meta) > 0 &&
-  all(c("id", "variant") %in% names(meta))
-) {
-  meta %>%
-    transmute(
-      id = as.character(id),
-      hm_variant = as.character(variant),
-      hm_genotype = if ("genotype" %in% names(meta)) {
-        as.character(genotype)
-      } else {
-        NA_character_
-      }
-    )
-} else {
-  tibble(
-    id = character(),
-    hm_variant = character(),
-    hm_genotype = character()
-  )
-}
-
-
-    lbl_tbl <- tibble(id = ids) %>%
-      left_join(ref_meta_hm, by = "id") %>%
-      left_join(community_meta, by = "id") %>%
-      mutate(
-        variant  = hm_variant,
-        genotype = coalesce(harmonise_genotype(hm_genotype), community_clade),
-        # Shorten long FASTA headers: extract accession + isolate/strain name
-        # Handles both "isolate XXXX" and "strain: XXXX" formats
-        # E.g., "KX151409.1 Hepatovirus A isolate h737 ..." â†’ "KX151409.1 (h737)"
-        # E.g., "LC035017.1 Hepatitis A virus gene for polyprotein, partial cds, strain: 1404-20055-WakymC-4HA42" â†’ "LC035017.1 (1404-20055-WakymC-4HA42)"
-        short_id = {
-          accession <- str_extract(id, "^[^\\s]+")
-          # Extract isolate/strain name: try "isolate" pattern, then "strain:" pattern
-          isolate_m1 <- str_extract(id, "(?<= isolate )[^ ,]+")
-          isolate_m2 <- str_extract(id, "(?<=strain: )[^ ,]+")
-          isolate_part <- coalesce(isolate_m1, isolate_m2)
-          
-          if_else(!is.na(isolate_part),
-                 paste0(accession, " (", isolate_part, ")"),
-                 accession)
-        },
-        display = case_when(
-  id == query_id ~
-    paste0(short_id, "  \u2605"),
-
-  !is.na(genotype) &
-    !is.na(variant) ~
-    paste0(
-      short_id, "  [", genotype,
-      "  ", variant, "]"
-    ),
-
-  !is.na(genotype) ~
-    paste0(short_id, "  [", genotype, "]"),
-
-  !is.na(variant) ~
-    paste0(short_id, "  [", variant, "]"),
-
-  TRUE ~ short_id
-)
-      )
-    lbl_map <- setNames(lbl_tbl$display, lbl_tbl$id)
-    rownames(snp_mat) <- lbl_map[rownames(snp_mat)]
-    colnames(snp_mat) <- lbl_map[colnames(snp_mat)]
-
-    query_lbl <- lbl_map[query_id]
-    ann_row <- data.frame(
-      Type = ifelse(rownames(snp_mat) == query_lbl, "Query", "Reference"),
-      row.names = rownames(snp_mat)
-    )
-    ann_colors <- list(Type = c(Query = "#d62728", Reference = "#aec7e8"))
-
-    # Adaptive sizing: base cell size on number of sequences
-    # Ensures readable labels and numbers even with many sequences
-    cell_size <- if (n_tips <= 10) 60 else if (n_tips <= 20) 45 else 30
-    fontsize_main <- if (n_tips <= 10) 15 else if (n_tips <= 20) 14 else 13
-    fontsize_num <- if (n_tips <= 10) 12 else if (n_tips <= 20) 11 else 10
-    fontsize_row <- if (n_tips <= 15) 13 else 11
-    
-    # Calculate figure size with minimum/maximum constraints
-    px <- min(18, max(10, n_tips * (cell_size / 35)))
-    
-    # Continuous blue palette for SNP distances
-color_func <- colorRampPalette(
-  c(
-    "#f7fbff",
-    "#deebf7",
-    "#9ecae1",
-    "#3182bd",
-    "#08519c",
-    "#08306b"
-  )
-)(100)
-
-# Keep only finite values when determining the colour scale
-finite_snp_values <- as.numeric(snp_mat)
-finite_snp_values <- finite_snp_values[is.finite(finite_snp_values)]
-
-if (length(finite_snp_values) == 0) {
-  cat("*SNP matrix contains no finite values and cannot be plotted.*\n\n")
-} else {
-  snp_min <- min(finite_snp_values)
-  snp_max <- max(finite_snp_values)
-  constant_snp_matrix <- snp_min == snp_max
-
-  if (constant_snp_matrix) {
-    # pheatmap requires unique break values.
-    # Add a small interval around the single observed value.
-    heat_breaks <- seq(
-      from = snp_min - 0.5,
-      to = snp_max + 0.5,
-      length.out = length(color_func) + 1
-    )
-
-    cluster_rows <- FALSE
-    cluster_cols <- FALSE
-    heat_treeheight_row <- 0
-    heat_treeheight_col <- 0
-  } else {
-    heat_breaks <- seq(
-      from = snp_min,
-      to = snp_max,
-      length.out = length(color_func) + 1
-    )
-
-    cluster_rows <- TRUE
-    cluster_cols <- TRUE
-    heat_treeheight_row <- 100
-    heat_treeheight_col <- 100
-  }
-
-  # Defensive check: pheatmap/cut requires strictly unique breaks
-  heat_breaks <- unique(heat_breaks)
-
-  if (length(heat_breaks) < 2) {
-    heat_breaks <- c(snp_min - 0.5, snp_max + 0.5)
-  }
-
-  safe_query_filename <- gsub(
-  "[^A-Za-z0-9._-]",
-  "_",
-  query_id
-)
-
-heatmap_png <- file.path(
-  report_figures_dir,
-  paste0(safe_query_filename, "_snp_heatmap.png")
-)
-
-  .ph_obj <- pheatmap(
-    snp_mat,
-    color = color_func,
-    breaks = heat_breaks,
-    cluster_rows = cluster_rows,
-    cluster_cols = cluster_cols,
-    clustering_distance_rows = as.dist(snp_mat),
-    clustering_distance_cols = as.dist(snp_mat),
-    clustering_method = "average",
-    display_numbers = TRUE,
-    number_format = "%d",
-    number_color = "black",
-    fontsize = fontsize_main,
-    fontsize_number = fontsize_num,
-    fontsize_row = fontsize_row,
-    annotation_row = ann_row,
-    annotation_colors = ann_colors,
-    legend = !constant_snp_matrix,
-    main = paste("Pairwise SNP distances â€”", query_id),
-    treeheight_row = heat_treeheight_row,
-    treeheight_col = heat_treeheight_col,
-    border_color = "#cccccc",
-    gaps_row = which(rownames(snp_mat) == query_lbl),
-    gaps_col = which(colnames(snp_mat) == query_lbl),
-    silent = TRUE
-  )
-
-  ggsave(
-    heatmap_png,
-    plot = .ph_obj$gtable,
-    width = px,
-    height = px,
-    dpi = 150,
-    limitsize = FALSE
-  )
-
-  if (!file.exists(heatmap_png)) {
-  stop("SNP heatmap was not created: ", heatmap_png)
-}
-
-.embed_img(heatmap_png)
-
-  if (constant_snp_matrix) {
-    cat(
-      sprintf(
-        "*All pairwise SNP distances are %s. Clustering was disabled because the matrix is constant.*\n\n",
-        snp_min
-      )
-    )
-  }
-}
-    
-    # Save SNP distance matrix as TSV for external analysis
-    snp_tsv <- file.path(out_dir, "snp_matrices", paste0(query_id, "_snp_distances.tsv"))
-    dir.create(dirname(snp_tsv), showWarnings = FALSE, recursive = TRUE)
-    
-    # Convert matrix to data frame with sequence IDs in first column
-    snp_df <- as.data.frame(snp_mat)
-    snp_df <- tibble::rownames_to_column(snp_df, var = "Sequence_1")
-    names(snp_df)[-1] <- rownames(snp_mat)  # Ensure column names are sequence labels
-    
-    write_tsv(snp_df, snp_tsv)
-    cat("[Download SNP distance matrix](snp_matrices/", query_id, "_snp_distances.tsv)\n\n", sep = "")
-    
-    cat("\n\n")
-  } # end SNP heatmap display
-} # end for each query
-} # end tree/alignment availability check
-
-```
----
-
 # 7. Conclusions and recommendations
 
 ```{r conclusions}
@@ -1640,11 +2888,11 @@ tibble(
     "IQ-TREE ML tree per query sequence",
     "Rendered phylogenetic tree image (PNG) per query sequence",
     "MAFFT alignment (query + BLAST hits + NextClade community sequences)",
-    "MAFFT alignment with BLAST hits only (no NextClade) â€” used for heatmap in report",
+    "MAFFT alignment with BLAST hits only (no NextClade) — used for heatmap in report",
     "Pairwise SNP distance matrix per query sequence (TSV format for external analysis)",
     "Outbreak phylogenetic alignment: batch sequences + database sequences for each variant (FASTA)",
     "Outbreak phylogenetic tree visualization (PNG) per HAV variant",
-    "Per-sequence summary table (this report, TSV) â€” includes all genotype and BLAST comparison data",
+    "Per-sequence summary table (this report, TSV) — includes all genotype and BLAST comparison data",
     "Report figure: amplicon coverage plot",
     "Report figure: batch phylogenetic tree",
     "Report figure: batch SNP heatmap",
@@ -1657,7 +2905,7 @@ tibble(
 ```
 
 ```{r write-outputs, include=FALSE}
-# â”€â”€ Prepare summary.tsv with expanded columns and new order â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Prepare summary.tsv with expanded columns and new order ──────────────────
 
 summary_tsv_output <- summary_tbl %>%
 
@@ -1728,7 +2976,7 @@ summary_tsv_output <- summary_tbl %>%
     BLAST_variant = blast_variant,
     BLAST_SNPs = blast_mismatch,
     DB_variant_count = db_variant_count,
-    Other_similar_BLAST_variant = similar_variants,
+    Similar_BLAST_variant = similar_variants,
     Input_length = input_length,
     Ambiguous = ambiguous_count,
     BLAST_pident = blast_pident,
@@ -1745,7 +2993,7 @@ summary_tsv_output <- summary_tbl %>%
 # Write summary TSV
 write_tsv(summary_tsv_output, file.path(params$out_base, "summary.tsv"))
 
-# NOTE: comparison.tsv was removed â€” summary.tsv now contains all comparison data
+# NOTE: comparison.tsv was removed — summary.tsv now contains all comparison data
 # (Genotype_NC, Genotype_BLAST, Clade_agree_blast, etc.)
 # clade_comp object no longer exists after cleanup; summary.tsv replaces its functionality
 # 
@@ -1757,7 +3005,7 @@ write_tsv(summary_tsv_output, file.path(params$out_base, "summary.tsv"))
 ```
 
 ```{r collect-figures-alignments, include=FALSE}
-# â”€â”€ Collect per-sequence phylogenetic tree images â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Collect per-sequence phylogenetic tree images ─────────────────────────────
 # Copy all tree.png files from output/trees/<seqName>/ to report_figures/
 seq_tree_pngs <- list.files(
   trees_dir,
@@ -1773,7 +3021,7 @@ if (length(seq_tree_pngs) > 0) {
   }
 }
 
-# â”€â”€ Collect outbreak phylogenetic tree images â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Collect outbreak phylogenetic tree images ──────────────────────────────────
 # Copy all .png files from output/outbreak_trees/ to report_figures/
 outbreak_trees_dir <- file.path(params$out_base, "outbreak_trees")
 if (dir.exists(outbreak_trees_dir)) {
@@ -1789,7 +3037,7 @@ if (dir.exists(outbreak_trees_dir)) {
   }
 }
 
-# â”€â”€ Collect alignment FASTA files â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Collect alignment FASTA files ──────────────────────────────────────────────
 # Create alignments folder and copy all .fasta files
 alignments_dir <- file.path(params$out_base, "alignments")
 dir.create(alignments_dir, showWarnings = FALSE, recursive = TRUE)
@@ -1811,8 +3059,6 @@ if (length(seq_alns) > 0) {
   for (aln_path in seq_alns) {
     seq_name <- basename(dirname(aln_path))
     fname <- basename(aln_path)
-    # Convert .fa to .fasta
-    fname <- sub("\\.fa$", ".fasta", fname)
     dest <- file.path(alignments_dir, paste0(seq_name, "_", fname))
     file.copy(aln_path, dest, overwrite = TRUE)
   }
@@ -1822,12 +3068,6 @@ if (length(seq_alns) > 0) {
 batch_aln <- file.path(trees_dir, "batch", "batch.aligned.fasta")
 if (file.exists(batch_aln)) {
   file.copy(batch_aln, file.path(alignments_dir, "batch_alignment.fasta"), overwrite = TRUE)
-}
-
-# Remove any duplicate batch_batch_alignment.fasta if it exists
-batch_batch_duplicate <- file.path(alignments_dir, "batch_batch_alignment.fasta")
-if (file.exists(batch_batch_duplicate)) {
-  unlink(batch_batch_duplicate)
 }
 
 # Outbreak alignments
@@ -1841,15 +3081,6 @@ if (dir.exists(outbreak_trees_dir)) {
     for (fasta_path in outbreak_fastas) {
       file.copy(fasta_path, file.path(alignments_dir, basename(fasta_path)), overwrite = TRUE)
     }
-  }
-}
-
-# â"€â"€ Cleanup: Convert any remaining .fa files to .fasta â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-fa_files <- list.files(alignments_dir, pattern = "\\.fa$", full.names = TRUE)
-if (length(fa_files) > 0) {
-  for (fa_path in fa_files) {
-    fasta_path <- sub("\\.fa$", ".fasta", fa_path)
-    file.rename(fa_path, fasta_path)
   }
 }
 ```
