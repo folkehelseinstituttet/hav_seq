@@ -1368,10 +1368,15 @@ triage_tbl %>%
   kbl(escape = FALSE,
       table.attr = 'style="width: auto;"',
       caption = "Batch overview (compact view without scrolling) — same data as above. Red background on Genotype columns indicates disagreement between NextClade and BLAST.") %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
-  column_spec(3, background = .genotype_nc_colors) %>%  # Genotype (NC)
-  column_spec(4, background = .genotype_blast_colors) %>%  # Genotype (BLAST)
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE) %>%
+  column_spec(1, width = "10em", extra_css = "white-space: nowrap;") %>%  # LabWareID
+  column_spec(2, width = "12em", extra_css = "white-space: nowrap;") %>%  # SequenceID
+  column_spec(3, width = "10em", background = .genotype_nc_colors, extra_css = "white-space: nowrap;") %>%  # Genotype (NC)
+  column_spec(4, width = "12em", background = .genotype_blast_colors, extra_css = "white-space: nowrap;") %>%  # Genotype (BLAST)
+  column_spec(5, width = "14em", extra_css = "white-space: nowrap;") %>%  # BLAST top hit
+  column_spec(6, width = "16em", extra_css = "white-space: nowrap;") %>%  # BLAST variant
   column_spec(7, background = .snp_colors, bold = TRUE) %>%  # Color code BLAST SNPs
+  column_spec(9, width = "20em", extra_css = "min-width: 18em; white-space: normal; line-height: 1.2; word-break: break-word;") %>%  # Similar BLAST variant
   column_spec(10, background = .input_length_colors)  # Color code Input length
 ```
 
@@ -2982,7 +2987,7 @@ summary_tsv_output <- summary_tbl %>%
     BLAST_variant = blast_variant,
     BLAST_SNPs = blast_mismatch,
     DB_variant_count = db_variant_count,
-    Similar_BLAST_variant = similar_variants,
+    Other_similar_BLAST_variant = similar_variants,
     Input_length = input_length,
     Ambiguous = ambiguous_count,
     BLAST_pident = blast_pident,
@@ -3065,6 +3070,8 @@ if (length(seq_alns) > 0) {
   for (aln_path in seq_alns) {
     seq_name <- basename(dirname(aln_path))
     fname <- basename(aln_path)
+    # Convert .fa to .fasta
+    fname <- sub("\\.fa$", ".fasta", fname)
     dest <- file.path(alignments_dir, paste0(seq_name, "_", fname))
     file.copy(aln_path, dest, overwrite = TRUE)
   }
@@ -3074,6 +3081,12 @@ if (length(seq_alns) > 0) {
 batch_aln <- file.path(trees_dir, "batch", "batch.aligned.fasta")
 if (file.exists(batch_aln)) {
   file.copy(batch_aln, file.path(alignments_dir, "batch_alignment.fasta"), overwrite = TRUE)
+}
+
+# Remove any duplicate batch_batch_alignment.fasta if it exists
+batch_batch_duplicate <- file.path(alignments_dir, "batch_batch_alignment.fasta")
+if (file.exists(batch_batch_duplicate)) {
+  unlink(batch_batch_duplicate)
 }
 
 # Outbreak alignments
@@ -3087,6 +3100,15 @@ if (dir.exists(outbreak_trees_dir)) {
     for (fasta_path in outbreak_fastas) {
       file.copy(fasta_path, file.path(alignments_dir, basename(fasta_path)), overwrite = TRUE)
     }
+  }
+}
+
+# Cleanup: Convert any remaining .fa files to .fasta
+fa_files <- list.files(alignments_dir, pattern = "\\.fa$", full.names = TRUE)
+if (length(fa_files) > 0) {
+  for (fa_path in fa_files) {
+    fasta_path <- sub("\\.fa$", ".fasta", fa_path)
+    file.rename(fa_path, fasta_path)
   }
 }
 ```
