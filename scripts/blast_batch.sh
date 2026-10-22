@@ -4,9 +4,8 @@
 # BLASTs a batch FASTA of query sequences against the local HAV BLAST database
 # built by make_blast_db.sh.
 #
-# Run from the project root with HAVDEV conda active:
-#   conda activate /path/to/hav_dev/.conda/HAVDEV
-#   bash scripts/blast_batch.sh <batch_fasta> <dataset_date> <dataset_dir> <out_base>
+# Run from the project root; this script is invoked in the BLAST environment:
+#   conda run -n BLAST bash scripts/blast_batch.sh <batch_fasta> <dataset_date> <dataset_dir> <out_base>
 #
 # Arguments:
 #   batch_fasta    Path to the multi-FASTA file (e.g. data/Batch-1/Batch-1.fa)
@@ -80,8 +79,7 @@ if [[ ! -f "${DB_PATH}.nhr" && ! -f "${DB_PATH}.ndb" ]]; then
 fi
 
 if ! command -v blastn &> /dev/null; then
-    echo "ERROR: blastn not found. Activate the HAVDEV conda environment:" >&2
-    echo "  conda activate /path/to/hav_dev/.conda/HAVDEV" >&2
+    echo "ERROR: blastn not found. Ensure the BLAST conda environment is available." >&2
     exit 1
 fi
 

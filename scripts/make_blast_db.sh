@@ -5,9 +5,8 @@
 # given dataset date.  The database uses -parse_seqids so that individual
 # sequences can be retrieved later with blastdbcmd.
 #
-# Run from the project root with HAVDEV conda active:
-#   conda activate /path/to/hav_dev/.conda/HAVDEV
-#   bash scripts/make_blast_db.sh [dataset_date]
+# Run in the BLAST conda environment:
+#   conda run -n BLAST bash scripts/make_blast_db.sh <input_fasta> <dataset_dir>
 #
 # Output:
 #   data/local_dataset/<date>/blast_db/hav.{nhr,nin,nsq,...}
@@ -33,8 +32,8 @@ if [[ ! -f "$INPUT_FA" ]]; then
 fi
 
 if ! command -v makeblastdb &> /dev/null; then
-    echo "ERROR: makeblastdb not found. Activate the BLAST conda environment:" >&2
-        exit 1
+    echo "ERROR: makeblastdb not found. Ensure the BLAST conda environment is available." >&2
+    exit 1
 fi
 
 # ── Build database ────────────────────────────────────────────────────────────

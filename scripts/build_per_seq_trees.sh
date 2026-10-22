@@ -35,7 +35,9 @@
 #
 # Prerequisites:
 #   - run_all_analyses.sh must have been run first (creates BLAST and NextClade results)
-#   - HAVDEV conda: mafft, iqtree (iqtree3), seqkit, python3, jq
+#   - iqtree-mafft conda: mafft, iqtree
+#   - Python 3 available on PATH
+#   - SEQKIT conda: seqkit
 
 set -euo pipefail
 
@@ -73,9 +75,9 @@ for f in "$BATCH_FA" "$BLAST_TSV" "$DEDUP_FA"; do
 done
 
 if ! command -v mafft &>/dev/null; then
-  echo "ERROR: mafft not found. Ensure HAVDEV conda is active." >&2; exit 1
+  echo "ERROR: mafft not found. Ensure the iqtree-mafft conda environment is active." >&2; exit 1
 fi
-# IQ-TREE v3 installs as 'iqtree' in the HAVDEV env
+# IQ-TREE v3 may install as either 'iqtree' or 'iqtree3'.
 IQTREE_BIN="iqtree3"
 if ! command -v "$IQTREE_BIN" &>/dev/null; then
   IQTREE_BIN="iqtree"

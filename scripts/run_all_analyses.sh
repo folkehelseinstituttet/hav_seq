@@ -13,14 +13,7 @@
 #   <dataset_dir>   Path to local_datasets/<dataset_date> directory
 #   <out_base>      Output base directory for results
 #   <year>          Year folder (for context)
-#   [options]       Optional flags (see below)
-#
-# Optional Sanger-specific options:
-#   --sanger                       Enable primer trimming pre-step
-#   --primer-names <csv>           Comma-separated primer names to use
-#   --primers-file <path>          Optional custom primer file (FASTA/CSV/TSV)
-#   --trimmed-fasta <path>         Output path for trimmed FASTA
-#   --resolved-primers-tsv <path>  Output path for resolved primer coordinates
+#   [options]       Optional Nextclade settings (see below)
 #
 # NextClade alignment options:
 #   --min-match-length <int>       Minimum seed match length for NextClade (default: 20)
@@ -48,8 +41,8 @@
 #
 # Prerequisites:
 #   - BLAST database built:   bash scripts/make_blast_db.sh [dataset_date]
-#   - Lineages dataset built: bash scripts/build_vp1b_lineage_dataset.sh
-#   - HAVDEV conda environment active (nextclade, blastn, seqkit)
+#   - Nextclade dataset staged by hav_wrapper.sh
+#   - Conda environments: BLAST, NEXTCLADE, iqtree-mafft, SEQKIT, R_shared
 
 set -euo pipefail
 
@@ -67,12 +60,7 @@ Required arguments:
   <year>           Year folder
 
 Optional flags:
-  --sanger                       Enable Sanger primer trimming pre-step
-  --primer-names <csv>           Comma-separated primer names
-  --primers-file <path>          Optional custom primer file (FASTA/CSV/TSV)
-  --trimmed-fasta <path>         Optional trimmed FASTA output path
-  --resolved-primers-tsv <path>  Optional resolved primer coordinate TSV path
-  --min-match-length <int>       Minimum seed match length for NextClade (default: 20)
+  --min-match-length <int>       Minimum seed match length for Nextclade (default: 20)
 USAGE
 }
 
@@ -92,35 +80,10 @@ YEAR="$6"
 # Skip the 6 positional arguments before processing flags
 shift 6
 
-IS_SANGER=0
-PRIMER_NAMES=""
-PRIMERS_FILE=""
-TRIMMED_FASTA_OVERRIDE=""
-RESOLVED_PRIMERS_TSV=""
 MIN_MATCH_LENGTH=20
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --sanger)
-      IS_SANGER=1
-      shift
-      ;;
-    --primer-names)
-      PRIMER_NAMES="${2:-}"
-      shift 2
-      ;;
-    --primers-file)
-      PRIMERS_FILE="${2:-}"
-      shift 2
-      ;;
-    --trimmed-fasta)
-      TRIMMED_FASTA_OVERRIDE="${2:-}"
-      shift 2
-      ;;
-    --resolved-primers-tsv)
-      RESOLVED_PRIMERS_TSV="${2:-}"
-      shift 2
-      ;;
     --min-match-length)
       MIN_MATCH_LENGTH="${2:?--min-match-length requires a value}"
       shift 2
@@ -137,12 +100,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$IS_SANGER" -eq 1 && -z "$PRIMER_NAMES" ]]; then
-  echo "ERROR: --primer-names is required when --sanger is enabled." >&2
-  exit 1
-fi
-
-PROJECT_DIR="$(pwd)"
 THREADS=4
 
 
@@ -171,53 +128,13 @@ echo "  Dataset   : $DATASET_DATE"
 echo "  Threads   : $THREADS"
 echo "  Output    : $OUT_BASE"
 echo "  Lineages dataset : $LINEAGES_DATASET"
-echo "  Primer names : $PRIMER_NAMES"
-echo "  Primers file : $PRIMERS_FILE"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
 
-# ── Optional pre-step: coordinate-based primer trimming ──────────────────────
+# Primer trimming is intentionally disabled: the replacement
+# trim_primers_by_reference.py script has not been implemented yet.
 ANALYSIS_FA="$BATCH_FA"
-if [[ "$IS_SANGER" -eq 1 ]]; then
-  echo "▶ Pre-step: Sanger primer trimming (reference coordinates)"
-  echo "─────────────────────────────────────────────────────────────────"
-
-  TRIMMED_FASTA="$PROJECT_DIR/$BATCH_DIR/${BATCH_NAME}.trimmed.fa"
-  if [[ -n "$TRIMMED_FASTA_OVERRIDE" ]]; then
-    TRIMMED_FASTA="$TRIMMED_FASTA_OVERRIDE"
-  fi
-
-  PRIMER_TRIM_REPORT="$OUT_BASE/primer_trimming.tsv"
-  if [[ -n "$RESOLVED_PRIMERS_TSV" ]]; then
-    RESOLVED_OUT="$RESOLVED_PRIMERS_TSV"
-  else
-    RESOLVED_OUT="$OUT_BASE/resolved_primers.tsv"
-  fi
-
-  TRIM_CMD=(
-    python3 scripts/trim_primers_by_reference.py
-    --input-fasta "$BATCH_FA"
-    --output-fasta "$TRIMMED_FASTA"
-    --reference-fasta "$LINEAGES_DATASET/reference.fasta"
-    --primer-names "$PRIMER_NAMES"
-    --builtin-primers "$PROJECT_DIR/data/Primers/PCR_primers/primers.fa"
-    --report-tsv "$PRIMER_TRIM_REPORT"
-    --resolved-primers-tsv "$RESOLVED_OUT"
-    --threads "$THREADS"
-  )
-
-  if [[ -n "$PRIMERS_FILE" ]]; then
-    TRIM_CMD+=(--custom-primers "$PRIMERS_FILE")
-  fi
-
-  "${TRIM_CMD[@]}"
-
-  ANALYSIS_FA="$TRIMMED_FASTA"
-  echo "  Trimmed FASTA → $ANALYSIS_FA"
-  echo "  Trimming report → $PRIMER_TRIM_REPORT"
-  echo ""
-fi
 
 # ── Analysis 1: BLAST ─────────────────────────────────────────────────────────
 echo "▶ Step 1/5: BLAST"
@@ -354,5 +271,3 @@ echo "  Batch SNP matrix         : $OUT_BASE/snp_matrices/batch_snp_distances.ts
 echo "  Outbreak lineage trees   : $OUT_BASE/outbreak_trees/"
 echo "  Batch report             : $REPORT_OUTPUT"
 echo "════════════════════════════════════════════════════════════════"
-
-
