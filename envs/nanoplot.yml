@@ -1,9 +1,0 @@
-name: nanoplot
-# Read QC for the WGS (Nanopore) pipeline. Invoked as `conda run -n nanoplot`
-# by scripts/run_pipeline.sh.
-channels:
-  - conda-forge
-  - bioconda
-  
-dependencies:
-  - nanoplot

@@ -1,9 +1,0 @@
-name: chopper
-# Read quality/length filtering for the WGS (Nanopore) pipeline. Invoked as
-# `conda run -n chopper` by scripts/run_pipeline.sh.
-channels:
-  - bioconda
-  - conda-forge
-  - defaults
-dependencies:
-  - chopper
