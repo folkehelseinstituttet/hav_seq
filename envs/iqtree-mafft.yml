@@ -1,0 +1,21 @@
+name: iqtree-mafft
+channels:
+  - defaults
+  - bioconda
+  - conda-forge
+dependencies:
+  - _openmp_mutex=4.5=20_gnu
+  - gawk=5.4.1=h0a3468a_0
+  - gmp=6.3.0=hfd2156b_3
+  - iqtree=3.1.3=h8471819_0
+  - libasprintf=0.25.1=h3f43e3d_1
+  - libgcc=16.1.0=ha9f2e26_3
+  - libgcc-ng=16.1.0=h69a702a_3
+  - libgettextpo=0.25.1=h3f43e3d_1
+  - libgomp=16.1.0=he0feb66_3
+  - libiconv=1.18=h0cb94f2_3
+  - libstdcxx=16.1.0=h934c35e_3
+  - mafft=7.526=h4bc722e_0
+  - mpfr=4.2.2=ha2cb11d_1
+  - ncurses=6.6=hdb14827_1
+  - readline=8.3=hd6e31c0_1
