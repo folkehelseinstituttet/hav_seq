@@ -1277,8 +1277,8 @@ This report compares complementary HAV analyses run on **`r batch_name`**:
 triage_tbl %>%
   arrange(seqName) %>%
   transmute(
-    `LabWareID`     = if_else(!is.na(LabWareID), LabWareID, "—"),
-    `SequenceID`    = if_else(!is.na(SekvensID), SekvensID, "—"),
+    `LabWareID`     = if_else(!is.na(LabWareID), as.character(LabWareID), "—"),
+    `SequenceID`    = if_else(!is.na(SekvensID), as.character(SekvensID), "—"),
     `Genotype (NC)` = if_else(!is.na(clade), clade, "—"),
     `Genotype (BLAST)` = if_else(!is.na(blast_genotype), blast_genotype, "—"),
     `BLAST top hit` = if_else(!is.na(sseqid), sseqid, "—"),
