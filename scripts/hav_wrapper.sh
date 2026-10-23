@@ -65,8 +65,8 @@ Required argument:
 Common options:
   --dataset-date <date>    Dataset version (default: 2026-04-10)
   --threads <n>            CPU threads (default: 4)
+  --test                   Test run: do not modify 2PA.fa; write 2PA_test_<date_time>.fa instead
   -h, --help
-
 Required:
   --samplesheet <path>     TSV with Sample + other columns
                            Sanger: auto-generated from FASTA filenames if not provided
@@ -85,7 +85,7 @@ YEAR=""
 THREADS="$DEFAULT_THREADS"
 SAMPLESHEET=""
 BATCH_FA=""
-
+TEST_MODE=0
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -101,6 +101,8 @@ while [[ $# -gt 0 ]]; do
     --samplesheet)
       SAMPLESHEET="${2:?--samplesheet requires a value}"
       shift 2 ;;
+    --test)
+      TEST_MODE=1; shift ;;
     -h|--help)
       usage; exit 0 ;;
     -*)
@@ -127,7 +129,10 @@ fi
 
 FASTA_DIR="$TMP_DIR/Fasta"
 BATCH_FA="$FASTA_DIR/$BATCH_NAME.fasta"
-OUT_BASE="$HOME/$BATCH_NAME"_results
+# Base directory (server: /home/ngs, local: set by ngs_scripts wrapper) is exported
+# as OUT_BASE by the caller; from here OUT_BASE denotes this batch's results dir.
+ENV_BASE="${OUT_BASE:-$HOME}"
+OUT_BASE="${RESULTS_DIR:-$ENV_BASE/${BATCH_NAME}_results}"
 DATASET_DIR="$TMP_DIR/local_dataset"
 
 
@@ -172,8 +177,8 @@ fi
 mkdir -p "$OUT_BASE"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-LOGFILE="/home/ngs/hav_sequencing_wrapper.log"
-ERRORLOG="/home/ngs/hav_sequencing_wrapper.error.log"
+LOGFILE="${LOGFILE:-$ENV_BASE/hav_sequencing_wrapper.log}"
+ERRORLOG="${ERRORLOG:-$ENV_BASE/hav_sequencing_wrapper.error.log}"
 
 # Opprett loggfil hvis den ikke finnes
 if [[ ! -f "$LOGFILE" ]]; then
@@ -251,7 +256,7 @@ if [[ "$MODE" == "sanger" ]]; then
 
 conda run -n NEXTCLADE nextclade dataset get \
   --name="community/masphl-bioinformatics/hav/vp1-2b-junction" \
-  --output-dir="/mnt/tempdata/hav_input/nextclade_hav_vp1_2b"
+  --output-dir="$TMP_DIR/nextclade_hav_vp1_2b"
 
 export LINEAGES_DATASET="$TMP_DIR/nextclade_hav_vp1_2b"
 
@@ -303,19 +308,27 @@ bash "$HAV_SEQ_REPO/scripts/run_all_analyses.sh" "$BATCH_DIR" "$DATASET_DATE" "$
 step "Add FASTA to database"
 
 # Opprett mappe for ny database
-HAV_DB_DIR="$HOME/hav_database"
+HAV_DB_DIR="${HAV_DB_DIR:-$ENV_BASE/hav_database}"
 mkdir -p "$HAV_DB_DIR"
 
-# Dagens dato
-TODAY=$(date +%F)
+if [[ "$TEST_MODE" -eq 1 ]]; then
+  # Test: original 2PA.fa is left untouched; a timestamped copy gets the new sequences
+  TEST_DB="$HAV_DB_DIR/2PA_test_$(date +%Y-%m-%d_%H%M%S).fa"
+  cp "$DATASET_DIR/2PA.fa" "$TEST_DB"
+  cat "$BATCH_FA" >> "$TEST_DB"
+  echo "  TEST MODE: new sequences added to $TEST_DB (2PA.fa not modified)"
+else
+  # Dagens dato
+  TODAY=$(date +%F)
 
-# Flytt gammel database til arkivnavn
-cp "$DATASET_DIR/2PA.fa" "$HAV_DB_DIR/2PA_pre_${TODAY}.fa"
+  # Flytt gammel database til arkivnavn
+  cp "$DATASET_DIR/2PA.fa" "$HAV_DB_DIR/2PA_pre_${TODAY}.fa"
 
-# Kopier gammel database tilbake som utgangspunkt for ny
-cp "$HAV_DB_DIR/2PA_pre_${TODAY}.fa" "$HAV_DB_DIR/2PA.fa"
+  # Kopier gammel database tilbake som utgangspunkt for ny
+  cp "$HAV_DB_DIR/2PA_pre_${TODAY}.fa" "$HAV_DB_DIR/2PA.fa"
 
-# Legg til nye sekvenser
-# BATCH_FA inneholder multifasta med alle prøvene i batchen
-cat "$BATCH_FA" >> "$HAV_DB_DIR/2PA.fa"
-echo "  New sequences added to $HAV_DB_DIR/2PA.fa"
+  # Legg til nye sekvenser
+  # BATCH_FA inneholder multifasta med alle prøvene i batchen
+  cat "$BATCH_FA" >> "$HAV_DB_DIR/2PA.fa"
+  echo "  New sequences added to $HAV_DB_DIR/2PA.fa"
+fi
