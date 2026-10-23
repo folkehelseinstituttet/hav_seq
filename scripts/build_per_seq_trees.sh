@@ -60,7 +60,7 @@ TREES_DIR="$OUT_BASE/trees"
 BLAST_TSV="$OUT_BASE/blast_results.tsv"
 NC_LINEAGES_NDJSON="$OUT_BASE/lineages/nextclade.ndjson"
 
-LINEAGES_DATASET="$PROJECT_DIR/data/nextclade_datasets/hav-vp1-2b-lineages"
+LINEAGES_DATASET="${LINEAGES_DATASET:-$PROJECT_DIR/data/nextclade_datasets/hav-vp1-2b-lineages}"
 LINEAGES_TREE_JSON="$LINEAGES_DATASET/tree.json"
 COMMUNITY_SEQS_FA="$LINEAGES_DATASET/community_sequences.fasta"
 
