@@ -143,7 +143,7 @@ echo "────────────────────────�
 # blast_batch.sh writes directly to OUT_BASE
 # Pass arguments directly to preserve spaces in paths
 
-conda run -n BLAST bash $HAV_SEQ_REPO/scripts/blast_batch.sh "$ANALYSIS_FA" "$DATASET_DATE" "$DATASET_DIR" "$OUT_BASE"
+conda run -n BLAST bash "$HAV_SEQ_REPO/scripts/blast_batch.sh" "$ANALYSIS_FA" "$DATASET_DATE" "$DATASET_DIR" "$OUT_BASE"
 echo ""
 
 # ── Analysis 2: NextClade (lineages dataset) ──────────────────────────────────
@@ -177,7 +177,7 @@ echo "▶ Step 3/6: Per-sequence trees (IQ-TREE with nearest neighbors)"
 echo "─────────────────────────────────────────────────────────────────"
 
 # Pass arguments directly to preserve spaces in paths
-conda run -n iqtree-mafft bash $HAV_SEQ_REPO/scripts/build_per_seq_trees.sh "$BATCH_DIR" "$DATASET_DATE" 30 "$OUT_BASE" "$DATASET_DIR" "$BATCH_FA"
+conda run -n iqtree-mafft bash "$HAV_SEQ_REPO/scripts/build_per_seq_trees.sh" "$BATCH_DIR" "$DATASET_DATE" 30 "$OUT_BASE" "$DATASET_DIR" "$BATCH_FA"
 echo "  Results → $OUT_BASE/trees/"
 echo ""
 
@@ -186,7 +186,7 @@ echo ""
 echo "▶ Step 4/6: Batch-specific trees and SNP matrices"
 echo "─────────────────────────────────────────────────────────────────"
 # Pass arguments directly to preserve spaces in paths
-conda run -n iqtree-mafft bash $HAV_SEQ_REPO/scripts/build_batch_analysis.sh "$BATCH_DIR" "$DATASET_DATE" "$OUT_BASE"
+conda run -n iqtree-mafft bash "$HAV_SEQ_REPO/scripts/build_batch_analysis.sh" "$BATCH_DIR" "$DATASET_DATE" "$OUT_BASE"
 echo "  Results → $OUT_BASE/trees/batch/"
 echo "  SNP matrix → $OUT_BASE/snp_matrices/batch_snp_distances.tsv"
 echo ""
