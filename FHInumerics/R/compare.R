@@ -12,7 +12,8 @@ DEFAULT_SETTINGS <- list(
   search = "decipher",    # decipher (R) | blast (rBLAST; needs BLAST+ installed)
   aligner = "decipher",   # decipher (R) | mafft (pymafft, Python)
   bootstrap = TRUE,       # 100 bootstraps for the tree
-  threads = 4             # search and alignment
+  threads = 4,            # search and alignment
+  exclude_self = FALSE    # drop hits to the database entry with the query's own name
 )
 
 ALIGNERS <- c("MAFFT (--auto, pymafft)" = "mafft", "DECIPHER AlignSeqs (R only)" = "decipher")
@@ -49,6 +50,12 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
   utils::write.table(hits, file.path(work, "search_raw.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
   hits$query <- q_ids$id[match(hits$qseqid, q_ids$internal)]
   hits$subject <- ref$ids$id[match(hits$sseqid, ref$ids$internal)]
+  # Queries taken from the database itself (Database viewer) would find their own entry.
+  if (isTRUE(settings$exclude_self)) {
+    self <- hits$query == hits$subject
+    if (any(self)) log("Left out each query's own database entry: ", paste(unique(hits$query[self]), collapse = ", "))
+    hits <- hits[!self, ]
+  }
 
   # ---- 2. Closest neighbours ----------------------------------------------------
   # Ties are broken by database order, so the same input always gives the same neighbours.
@@ -243,6 +250,7 @@ method_text <- function(settings) {
       blast = "Search: blastn via rBLAST (max_target_seqs 500, max_hsps 1);"),
     "per query, hits covering >= min_coverage % of the query, ranked by percent identity then score",
     "(ties by database order), top n_neighbours kept.",
+    if (isTRUE(settings$exclude_self)) "Hits to the database entry with the query's own name were left out.",
     switch(settings$aligner,
       mafft = "Alignment: MAFFT --auto (pymafft).",
       decipher = "Alignment: DECIPHER AlignSeqs."),

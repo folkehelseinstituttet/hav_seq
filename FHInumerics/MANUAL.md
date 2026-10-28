@@ -25,7 +25,13 @@ code (`R/compare.R`), so they give identical results for the same input and sett
 
 ## 2. Using the window
 
-### Left side: input and settings
+The menu at the top left switches between two pages:
+
+- **Outbreak detection**: compare new sequences to a database (sections 2.1-2.2).
+- **Database viewer**: browse, filter and chart a database, and pick samples from it
+  (section 2.3).
+
+### 2.1 Outbreak detection: input and settings
 
 - **Paste sequence(s) in FASTA format**, or **choose a FASTA file** (`.fa`, `.fasta`,
   `.fas`, `.fna`, `.txt`). A chosen file is used instead of pasted text. At most 50
@@ -42,10 +48,16 @@ code (`R/compare.R`), so they give identical results for the same input and sett
 - **Run comparison** starts the run; a progress bar shows the current step. When it is
   done, a message shows where the results were saved. Errors (for example an invalid
   sequence) are shown as a red message and in the *Run log*.
+- Samples sent from the Database viewer (see 2.3) arrive in the paste box, with a note
+  under it. As long as that text is not changed, each sample's own database entry is
+  left out of its closest matches (otherwise every sample would find itself, 0 SNPs).
+  This is recorded as `exclude_self: true` in `run_manifest.yaml`.
 
-### Right side: results
+### 2.2 Outbreak detection: results
 
-- **Tree**: the phylogeny. Queries are marked `(QUERY)`.
+- **Tree**: the phylogeny. Queries are marked `(QUERY)`. Point at the dot of a sample to
+  see a box with all its metadata (an orange ring marks the dot it belongs to); for a
+  query, the box shows the closest sequence(s) in the tree and the number of SNPs.
   - *Colour by*: colour the tips by a metadata column (e.g. clade).
   - *Show in labels*: metadata columns added to each label (e.g. date, country).
     Missing values are shown as `?`.
@@ -59,6 +71,52 @@ code (`R/compare.R`), so they give identical results for the same input and sett
   If more database sequences are equally close than fit in the tree, a yellow note says so
   (for example "101 database sequences are equally close ...; 20 are in the tree").
 - **Run log**: what happened in each step, with times, warnings and errors.
+
+### 2.3 Database viewer
+
+Left side:
+
+- **Database**: which database to show.
+- **Date column**: the column used for the date filter and the chart over time. Offered
+  are the columns where most values are dates (`2023-05-14`, `2023-05` or `2023`); the
+  default is `date_column` from `config.yaml` (section 5), else a column called `date`.
+  Without such a column there is no date filter.
+- **Sample date**: show samples from this date range. A date given only as a year or month
+  (`2019`, `2019-04`) counts as the first day of that year or month. *Include samples
+  without a date* (on by default).
+- **Choose samples**, in any combination:
+  - click rows in the table (Ctrl or Shift for several; click again to un-choose);
+  - paste sample IDs, or choose a text file with one ID per line (spaces, commas and
+    semicolons also separate IDs), then press *Choose these IDs*. IDs that are not in the
+    database are listed in a yellow note above the table;
+  - *Choose all shown*: all samples that pass the current filters; *Clear chosen*.
+
+  The line under the buttons counts the chosen samples. Chosen samples stay chosen when
+  the date range changes, even if they are no longer shown.
+- **Charts and downloads use**: all samples shown in the table (after all filters), or
+  only the chosen samples.
+- **Table (CSV)** and **Sequences (FASTA)**: download those samples.
+- **Send chosen samples to Outbreak detection** (at most 50): copies their sequences into
+  the paste box of Outbreak detection, selects the same database and switches page.
+  Press *Run comparison* there.
+
+Right side (tabs):
+
+- **Table**: the database metadata; filter with the boxes under the column names.
+- **Over time**: number of samples per month or year, optionally coloured by a column
+  (the 12 most common values; the rest is "Other"). Samples without a date are counted
+  in a note.
+- **Counts**: number of samples per value of a column (the 30 most common), optionally
+  coloured by another column.
+- **Cross-table**: counts of one column against another, with totals.
+- **Map**: samples per country (circle size = number of samples), from the
+  `country_column`. Point at a circle to see the country, its number of samples and the
+  number per value of the column chosen in *In the box, count per* (default: `genotype`,
+  else the database's `default_colour`); an orange ring marks the circle. Country names
+  the map does not know are listed above it. *Zoom to the samples* (on by default) or
+  show the whole world. Works without internet.
+
+Each chart can be downloaded as a PDF.
 
 Closing the browser tab stops FHInumerics (when started with the start file).
 
@@ -161,7 +219,7 @@ with comments. Relative paths are relative to the folder.
 | `settings: bootstrap` | 100 bootstrap replicates | `true` |
 | `settings: threads` | CPU threads for search and alignment | 4 |
 | `python` | Python to use for MAFFT, if several are installed | found automatically |
-| `databases` | list of databases: `name`, `fasta`, `metadata` (.tsv/.csv), `id_column`, `display_columns`, `default_labels`, `default_colour` | demo database |
+| `databases` | list of databases: `name`, `fasta`, `metadata` (.tsv/.csv), `id_column`, `display_columns`, `default_labels`, `default_colour`, `date_column` (Database viewer: default date column; optional, default `date` or the first column holding dates), `country_column` (map; default `country`) | demo database |
 
 **MAFFT (optional):** with `aligner: mafft`, the first start also installs pymafft
 (pinned in `python/requirements.txt`) into `tools/python-packages`, using a Python
@@ -198,3 +256,6 @@ Comparisons on the test queries (`tests/`, 2026-10-28):
   identical trees on repeated runs in our tests, and FastTree is not available as an R or
   Python package.
 - At most 50 query sequences per run.
+- The map places a country by its name. Common variants (United Kingdom, Viet Nam,
+  United States, ...) and notes in brackets ("Egypt (suspected)") are handled; other
+  unknown names are listed above the map.

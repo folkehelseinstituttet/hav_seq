@@ -4,7 +4,7 @@
 #   Rscript cli/fhinumerics --query sequences.fasta [--out DIR] [--db NAME]
 #                   [--neighbours 20] [--min-coverage 90] [--no-bootstrap]
 #                   [--aligner mafft|decipher] [--search decipher|blast]
-#                   [--threads 4] [--config config.yaml]
+#                   [--threads 4] [--exclude-self] [--config config.yaml]
 
 args <- commandArgs(trailingOnly = TRUE)
 file_arg <- sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))
@@ -21,6 +21,7 @@ i <- 1
 while (i <= length(args)) {
   key <- args[i]
   if (key == "--no-bootstrap") { opt$bootstrap <- FALSE; i <- i + 1; next }
+  if (key == "--exclude-self") { opt$exclude_self <- TRUE; i <- i + 1; next }
   if (key %in% c("-h", "--help") || i == length(args)) usage()
   opt[[sub("^--", "", key)]] <- args[i + 1]
   i <- i + 2
@@ -37,6 +38,7 @@ if (!is.null(opt[["min-coverage"]])) settings$min_coverage <- as.numeric(opt[["m
 if (!is.null(opt$threads)) settings$threads <- as.integer(opt$threads)
 for (key in c("aligner", "search")) if (!is.null(opt[[key]])) settings[[key]] <- opt[[key]]
 if (!is.null(opt$bootstrap)) settings$bootstrap <- opt$bootstrap
+if (!is.null(opt$exclude_self)) settings$exclude_self <- TRUE
 
 res <- run_compare(read_fasta(opt$query), db, cfg, settings, out_dir = opt$out,
                    progress = function(step, detail = NULL) message("== ", step))

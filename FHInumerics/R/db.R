@@ -18,6 +18,7 @@ load_config <- function(path) {
     db$fasta <- resolve(db$fasta)
     db$metadata <- resolve(db$metadata)
     db$id_column <- db$id_column %||% "id"
+    db$country_column <- db$country_column %||% "country"
     db
   })
   names(cfg$databases) <- vapply(cfg$databases, `[[`, "", "name")
@@ -52,17 +53,8 @@ display_columns <- function(db, meta) {
 #   search = "decipher": DECIPHER k-mer index (R only), kept in index.rds
 #   search = "blast":    BLAST database for rBLAST (needs BLAST+ on this computer)
 prepare_db <- function(db, cfg, search = "decipher", log = message) {
-  if (!file.exists(db$fasta)) stop("Database FASTA not found: ", db$fasta, call. = FALSE)
-  checksum <- unname(tools::md5sum(db$fasta))
-  dir <- file.path(cfg$cache_dir, paste0(gsub("[^A-Za-z0-9]+", "_", db$name), "_", substr(checksum, 1, 12)))
-  seqs_rds <- file.path(dir, "seqs.rds")
-  if (!file.exists(seqs_rds)) {
-    dir.create(dir, recursive = TRUE, showWarnings = FALSE)
-    seqs <- read_fasta(db$fasta)
-    ids <- data.frame(internal = paste0("D", seq_along(seqs)), id = names(seqs))
-    saveRDS(list(seqs = seqs, ids = ids, checksum = checksum), seqs_rds)
-  }
-  ref <- readRDS(seqs_rds)
+  ref <- load_db_seqs(db, cfg)
+  dir <- ref$dir
 
   if (search == "decipher") {
     index_rds <- file.path(dir, "index.rds")
@@ -85,6 +77,23 @@ prepare_db <- function(db, cfg, search = "decipher", log = message) {
   } else {
     stop("Unknown search method '", search, "' (use decipher or blast).", call. = FALSE)
   }
+  ref
+}
+
+# The database sequences and their internal IDs, cached in cache/<name>_<md5 prefix>/.
+load_db_seqs <- function(db, cfg) {
+  if (!file.exists(db$fasta)) stop("Database FASTA not found: ", db$fasta, call. = FALSE)
+  checksum <- unname(tools::md5sum(db$fasta))
+  dir <- file.path(cfg$cache_dir, paste0(gsub("[^A-Za-z0-9]+", "_", db$name), "_", substr(checksum, 1, 12)))
+  seqs_rds <- file.path(dir, "seqs.rds")
+  if (!file.exists(seqs_rds)) {
+    dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+    seqs <- read_fasta(db$fasta)
+    ids <- data.frame(internal = paste0("D", seq_along(seqs)), id = names(seqs))
+    saveRDS(list(seqs = seqs, ids = ids, checksum = checksum), seqs_rds)
+  }
+  ref <- readRDS(seqs_rds)
+  ref$dir <- dir
   ref
 }
 

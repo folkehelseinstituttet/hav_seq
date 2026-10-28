@@ -3,6 +3,28 @@
 All notable changes to FHInumerics. The version is in `VERSION` and is written into every
 run's `run_manifest.yaml`. Newest first.
 
+## 0.2.0 - 2026-10-28
+
+- Menu at the top left with two pages: **Outbreak detection** (the comparison, as before)
+  and the new **Database viewer**.
+- Database viewer: the database as a table with a filter per column and a date range;
+  choose samples by clicking rows, pasting IDs or choosing a text file of IDs; charts of
+  samples over time, counts per value, a cross-table and a map of samples per country
+  (each as PDF); download the table (CSV) or the sequences (FASTA); send up to 50 chosen
+  samples to Outbreak detection.
+- Samples sent from the Database viewer leave out their own database entry from their
+  closest matches (`exclude_self` in `run_manifest.yaml`; `--exclude-self` on the
+  command line).
+- Tree: point at the dot of a sample to see its metadata (for a query: its closest
+  sequences); an orange ring marks the dot.
+- Map: point at a circle to see the country, its number of samples and the number per
+  genotype (or another column); an orange ring marks the circle.
+- New settings per database (both optional): `date_column` (the date column is otherwise
+  found automatically and can be changed in the window), `country_column`.
+- Tables (also SNP distances and Closest matches) use the full height of the window; the
+  page scrolls.
+- New R package: maps (downloaded automatically at the next start).
+
 ## 0.1.0 - 2026-10-28
 
 First version in the `hav_seq` repository (previously developed as "hav-compare").

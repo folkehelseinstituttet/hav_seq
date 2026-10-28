@@ -40,11 +40,16 @@ settings:
 # (tab-separated .tsv or comma-separated .csv) with one row per sequence.
 # `id_column` is the metadata column matching the FASTA IDs (the first word of
 # each header). `display_columns` are offered for tree labels and colouring.
+# Database viewer (both optional): `date_column` is the date column chosen at start
+# (dates as 2023-05-14, 2023-05 or 2023; default: a column called date, else the first
+# column holding dates); `country_column` is used for the map (default: country).
 databases:
   - name: Demo - public HAV VP1-2B (NextClade community, 1773 seqs)
     fasta: data/demo/sequences.fasta
     metadata: data/demo/metadata.tsv
     id_column: id
+    date_column: date
+    country_column: country
     display_columns: [date, year, country, location, clade, lineage, author]
     default_labels: [date, country]
     default_colour: clade

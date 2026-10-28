@@ -2,6 +2,7 @@
 config.yaml
 cache/
 tools/
+databases/
 docs/
 CLAUDE.md
 *.Rhistory

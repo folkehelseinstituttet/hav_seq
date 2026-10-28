@@ -3,7 +3,7 @@
 # installs everything by itself.
 
 CRAN_PACKAGES <- c("shiny", "bslib", "DT", "yaml", "jsonlite", "ggplot2", "ape", "phangorn",
-                   "shinyFiles", "httpuv", "processx", "BiocManager")
+                   "shinyFiles", "httpuv", "processx", "BiocManager", "maps")
 BIOC_PACKAGES <- c("Biostrings", "DECIPHER", "ggtree")
 
 missing_packages <- function(pkgs = c(CRAN_PACKAGES, BIOC_PACKAGES)) {

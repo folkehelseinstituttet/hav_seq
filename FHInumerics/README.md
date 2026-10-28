@@ -35,7 +35,7 @@ started from inside a `.zip`), the black window explains it in plain words and s
 
 What the first start does (`launcher/setup.R`; it runs again by itself if something goes
 missing, e.g. after changing R version): it downloads the R packages shiny, bslib, DT,
-yaml, ggplot2, ape, phangorn, shinyFiles, processx and, from Bioconductor, Biostrings,
+yaml, ggplot2, maps, ape, phangorn, shinyFiles, processx and, from Bioconductor, Biostrings,
 DECIPHER and ggtree into your personal R library (no admin rights needed). Each R version
 (4.4, 4.5, 4.6, ...) gets its own copy, matching that version. It also creates
 `config.yaml` if there is none.
@@ -51,6 +51,8 @@ DECIPHER and ggtree into your personal R library (no admin rights needed). Each 
     metadata: X:/path/to/metadata.csv        # .tsv or .csv, one row per sequence
     id_column: Key                           # column matching the FASTA IDs
     display_columns: [date, country, genotype]
+    date_column: date                        # optional: date column in the Database viewer
+    country_column: country                  # optional: country column for the map
 ```
 
 Use forward slashes in Windows paths. The search index is built automatically in `cache/`
@@ -63,7 +65,8 @@ in `config.example.yaml` and in [MANUAL.md](MANUAL.md).
     Rscript cli/fhinumerics --query my.fasta --out results/
 
 Options: `--db NAME`, `--neighbours 20`, `--min-coverage 90`, `--no-bootstrap`,
-`--aligner decipher|mafft`, `--threads 4`, `--config config.yaml`. Start the window once
+`--aligner decipher|mafft`, `--threads 4`, `--exclude-self` (leave out database entries
+with the same name as a query), `--config config.yaml`. Start the window once
 first (or run `Rscript launcher/setup.R`) so the packages are installed.
 
 ## For developers
