@@ -1,0 +1,4 @@
+# Python package for the MAFFT step (installed by setup.R into tools/python-packages).
+# The version is pinned so results can be reproduced; change it on purpose only.
+# pymafft 0.2.0 has ready-made packages for Python 3.9-3.13 (see R/python.R).
+pymafft==0.2.0

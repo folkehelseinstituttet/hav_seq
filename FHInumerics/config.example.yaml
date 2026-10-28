@@ -1,0 +1,56 @@
+# FHInumerics configuration.
+# setup.R copies this file to config.yaml; edit config.yaml, not this file.
+# Relative paths are relative to this folder. On Windows, write paths with
+# forward slashes (X:/path/to/file.fasta).
+
+# Default output folder (can be changed in the app for each run).
+# "~" is your home folder (on Windows: Documents).
+output_dir: ~/FHInumerics-results
+
+# Where search indexes of the databases are kept (rebuilt automatically when
+# a database FASTA changes).
+cache_dir: cache
+
+# Python on this computer (3.9-3.13), used for the MAFFT alignment (pymafft).
+# Leave commented out to find it automatically; set it if you have several.
+# python: C:/Users/<you>/AppData/Local/Programs/Python/Python313/python.exe
+
+# Folders the "Browse..." buttons start from: label: path
+# (folders that do not exist on this computer are left out).
+browse_roots:
+  Home: "~"
+  "C: drive": "C:/"
+  "N: drive": "N:/"
+  "Root (Linux/Mac)": "/"
+
+# Default analysis settings. Aligner and bootstrap can be changed in the app.
+# The tree is always neighbour-joining (ape BIONJ on TN93 distances).
+settings:
+  n_neighbours: 20
+  min_coverage: 90
+  search: decipher      # decipher (R) | blast (rBLAST; only if BLAST+ is installed, see blast_dir)
+  aligner: decipher     # decipher (R only) | mafft (MAFFT --auto via pymafft; needs Python 3.9-3.13)
+  bootstrap: true       # 100 bootstraps for the tree
+  threads: 4            # search and alignment
+
+# Only for search: blast. Folder containing blastn and makeblastdb on this computer.
+# blast_dir: C:/Program Files/NCBI/blast-2.17.0+/bin
+
+# Reference databases. Each needs a FASTA file and a metadata table
+# (tab-separated .tsv or comma-separated .csv) with one row per sequence.
+# `id_column` is the metadata column matching the FASTA IDs (the first word of
+# each header). `display_columns` are offered for tree labels and colouring.
+databases:
+  - name: Demo - public HAV VP1-2B (NextClade community, 1773 seqs)
+    fasta: data/demo/sequences.fasta
+    metadata: data/demo/metadata.tsv
+    id_column: id
+    display_columns: [date, year, country, location, clade, lineage, author]
+    default_labels: [date, country]
+    default_colour: clade
+
+  # Example: an in-house database on a network drive
+  # - name: In-house database
+  #   fasta: X:/path/to/sequences.fasta
+  #   metadata: X:/path/to/metadata.csv
+  #   id_column: Key

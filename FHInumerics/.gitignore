@@ -1,0 +1,7 @@
+# Local only, never committed
+config.yaml
+cache/
+tools/
+docs/
+CLAUDE.md
+*.Rhistory

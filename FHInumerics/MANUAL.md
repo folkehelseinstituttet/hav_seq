@@ -1,0 +1,200 @@
+# FHInumerics manual
+
+What FHInumerics does with your sequences, step by step; how to use the window; every
+setting; and every file a run writes. For installing and starting, see [README.md](README.md).
+
+Contents: [1. A run in short](#1-a-run-in-short) ·
+[2. Using the window](#2-using-the-window) ·
+[3. The analysis step by step](#3-the-analysis-step-by-step) ·
+[4. Output files](#4-output-files) · [5. Settings](#5-settings-configyaml) ·
+[6. Reproducibility](#6-reproducibility) · [7. Known limits](#7-known-limits)
+
+## 1. A run in short
+
+| Step | What happens | Tool (runs in R) |
+|---|---|---|
+| 1. Read input | Check and clean the pasted or chosen FASTA | FHInumerics |
+| 2. Search | Find similar database sequences, both strands | DECIPHER `SearchIndex` + `AlignPairs` |
+| 3. Closest neighbours | Keep the closest N per query that cover enough of it | FHInumerics |
+| 4. Align | Multiple alignment of queries + neighbours, trimmed to the shared region | DECIPHER `AlignSeqs` (or MAFFT) |
+| 5. SNP distances | Count differences at positions where both have A/C/G/T | ape `dist.dna` |
+| 6. Tree | Neighbour-joining with bootstrap support, midpoint rooted | ape `bionj`, phangorn `midpoint` |
+
+The window, the command line (`cli/fhinumerics`) and the tests all use the same analysis
+code (`R/compare.R`), so they give identical results for the same input and settings.
+
+## 2. Using the window
+
+### Left side: input and settings
+
+- **Paste sequence(s) in FASTA format**, or **choose a FASTA file** (`.fa`, `.fasta`,
+  `.fas`, `.fna`, `.txt`). A chosen file is used instead of pasted text. At most 50
+  sequences per run.
+- **Database**: the databases listed in `config.yaml`.
+- **Closest sequences per query** (5-50, default 20): how many database sequences per
+  query go into the alignment and tree.
+- **More settings** (closed by default):
+  - *Minimum % of the query a match must cover* (50-100, default 90).
+  - *Alignment*: DECIPHER (default, R only) or MAFFT (only if set up, see section 5).
+  - *Bootstrap support for the tree* (on by default; off makes the run faster).
+- **Save results in**: the folder where a new subfolder is made for each run. Type a path
+  or use *Browse...*.
+- **Run comparison** starts the run; a progress bar shows the current step. When it is
+  done, a message shows where the results were saved. Errors (for example an invalid
+  sequence) are shown as a red message and in the *Run log*.
+
+### Right side: results
+
+- **Tree**: the phylogeny. Queries are marked `(QUERY)`.
+  - *Colour by*: colour the tips by a metadata column (e.g. clade).
+  - *Show in labels*: metadata columns added to each label (e.g. date, country).
+    Missing values are shown as `?`.
+  - *Show bootstrap support (>= 70)*: support values on the branches.
+  - *Download PDF*: the tree as shown.
+- **SNP distances**: the SNP matrix, rows and columns in tree order. Darker blue = fewer
+  differences: 0, 1-2, 3-5, 6-10, 11-20; 21 or more is white. The note above the table says
+  over how many aligned positions the differences were counted.
+- **Closest matches**: all search hits for every query (also those not in the tree), with
+  database metadata, filterable per column. `selected = TRUE` means the hit is in the tree.
+  If more database sequences are equally close than fit in the tree, a yellow note says so
+  (for example "101 database sequences are equally close ...; 20 are in the tree").
+- **Run log**: what happened in each step, with times, warnings and errors.
+
+Closing the browser tab stops FHInumerics (when started with the start file).
+
+## 3. The analysis step by step
+
+### 3.1 Reading the input (`R/fasta.R`)
+
+- Works like NCBI BLAST: text without a `>` header is one unnamed sequence (`query_1`);
+  the name is the first word after `>`.
+- Spaces, line breaks, digits, `.`, `/` and `-` are removed (so GenBank flat-file text can
+  be pasted); letters are made upper case; `U` becomes `T`.
+- Allowed letters: `ACGT` and the IUPAC ambiguity codes `RYKMSWBDHVN`. Anything else,
+  empty entries and duplicate names stop the run with a message naming the sequence.
+
+### 3.2 Database search (`R/search.R`)
+
+- The database FASTA gets a DECIPHER k-mer index (k = 11), built once and kept in `cache/`;
+  it is rebuilt automatically when the FASTA file changes (checked by MD5 checksum).
+- Each query **and its reverse complement** is searched (`SearchIndex`, up to 500 hits per
+  query), and every hit is aligned to the query (`AlignPairs`). For each query/database
+  pair the strand with the better score is kept.
+- The hit table has the same columns as `blastn -outfmt 6`. Percent identity (`pident`)
+  = identical positions / alignment length including gaps, as in BLAST. Query coverage
+  (`qcovhsp`) = % of the query inside the aligned region.
+- Optional: `search: blast` uses BLAST+ (blastn through rBLAST) if it is installed.
+
+### 3.3 Choosing the closest neighbours (`R/compare.R`)
+
+- Only hits that cover at least *minimum coverage* % of the query are used.
+- Hits are ranked by percent identity, then alignment score; **ties are broken by
+  database order**, so the same input always gives the same neighbours.
+- The top N per query are kept (*closest sequences per query*); all queries' neighbours
+  together form the sequence set for the alignment.
+- Ties are counted: how many database sequences have the same identity and length as the
+  best hit. If more are equally close than are shown, the run log and the *Closest
+  matches* tab say so; `closest_summary.tsv` has the numbers.
+- A query whose best hit is on the minus strand is **reverse-complemented** before the
+  alignment (noted in the run log and the manifest).
+
+### 3.4 Alignment and trimming
+
+- Queries + neighbours are aligned with **DECIPHER `AlignSeqs`** (default), or with
+  **MAFFT `--auto`** (pymafft, Python) when `aligner: mafft` is set.
+- The alignment is **trimmed to the region every query covers**: from the latest query
+  start to the earliest query end. All-gap columns are removed. Database sequences that
+  have A/C/G/T in less than 50% of that region are dropped (named in the run log).
+  This way all distances are counted over the same positions.
+- If the queries do not overlap at all (e.g. different genome regions), the run stops and
+  asks you to run them separately.
+
+### 3.5 SNP distances
+
+- `ape::dist.dna(model = "N", pairwise.deletion = TRUE)`: for each pair, the number of
+  differences at positions where **both** sequences have A, C, G or T. Gaps, N and
+  ambiguity codes are skipped for that pair only. These are the same numbers as
+  snp-dists gives.
+- `compared_sites.tsv` gives, for each pair, how many positions were compared (the
+  denominator of the SNP count).
+
+### 3.6 Tree
+
+- Neighbour-joining: `ape::bionj` on TN93 distances (pairwise deletion). Negative branch
+  lengths are set to 0.
+- Bootstrap: 100 replicates (`ape::boot.phylo`, random seed 1, so values are the same
+  every run), when bootstrap is on and there are at least 4 sequences. Support is the %
+  of replicates.
+- Rooted at the midpoint (`phangorn::midpoint`).
+
+## 4. Output files
+
+Each run makes its own folder `<date>-<time>_<first query name>` in the results folder:
+
+| File | Content |
+|---|---|
+| `query.fasta` | the queries as given (after cleaning) |
+| `search_hits.tsv` | all search hits with database metadata; `selected` = in the tree |
+| `closest_summary.tsv` | per query: best identity, best mismatches, how many are equally close, how many shown |
+| `alignment.fasta` | the trimmed alignment used for SNPs and tree |
+| `snp_matrix.tsv` | SNP differences between all sequences |
+| `compared_sites.tsv` | number of compared positions per pair |
+| `tree.nwk` | the tree (Newick, bootstrap support as node labels) |
+| `tree_metadata.tsv` | metadata of every tip in the tree |
+| `run_manifest.yaml` | settings, method description, database file and checksum, queries, reverse-complemented queries, FHInumerics version and the version of every package and tool |
+| `work/` | intermediate files (internal IDs, untrimmed alignment) |
+
+## 5. Settings (`config.yaml`)
+
+`config.yaml` is local to each copy (not in git); `config.example.yaml` is the template
+with comments. Relative paths are relative to the folder.
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `output_dir` | default results folder (`~` = home / Documents) | `~/FHInumerics-results` |
+| `cache_dir` | where search indexes are kept | `cache` |
+| `browse_roots` | starting folders for the *Browse...* button | home and drives |
+| `settings: n_neighbours` | closest sequences per query | 20 |
+| `settings: min_coverage` | minimum % of the query a hit must cover | 90 |
+| `settings: search` | `decipher`, or `blast` (needs BLAST+ and `blast_dir`) | `decipher` |
+| `settings: aligner` | `decipher` (R only), or `mafft` (needs Python 3.9-3.13) | `decipher` |
+| `settings: bootstrap` | 100 bootstrap replicates | `true` |
+| `settings: threads` | CPU threads for search and alignment | 4 |
+| `python` | Python to use for MAFFT, if several are installed | found automatically |
+| `databases` | list of databases: `name`, `fasta`, `metadata` (.tsv/.csv), `id_column`, `display_columns`, `default_labels`, `default_colour` | demo database |
+
+**MAFFT (optional):** with `aligner: mafft`, the first start also installs pymafft
+(pinned in `python/requirements.txt`) into `tools/python-packages`, using a Python
+3.9-3.13 on the computer. Python 3.14 cannot be used (pymafft has no ready-made package for
+it). Without a suitable Python, FHInumerics stops with a message explaining this.
+
+## 6. Reproducibility
+
+- The same input, settings, database and package versions give the same neighbours, SNP
+  matrix, tree and bootstrap values every time. `run_manifest.yaml` records all of these.
+- Different R versions install their own package versions (whatever CRAN/Bioconductor
+  provide for that R version); the versions used are in each manifest.
+
+Comparisons on the test queries (`tests/`, 2026-10-28):
+
+- **DECIPHER vs MAFFT alignment:** fragments: identical alignment, SNP matrix and tree.
+  Whole genome: same closest match and SNP count (2); distant neighbours (~420 SNPs)
+  differ by 2-4 SNPs because gaps are placed differently, so the tree differs slightly.
+- **pymafft vs MAFFT program:** byte-identical alignments.
+- **ape vs snp-dists:** identical SNP matrices (also with N, ambiguity codes and gaps).
+- **DECIPHER search vs blastn:** fragments: same neighbours. Whole genome: same closest
+  match and SNP counts; 4 of the 20 more distant neighbours (~94% identity) differed,
+  because the two compute percent identity from slightly different local alignments and
+  many hits are within 0.1% of each other at that distance.
+- **Tree vs the earlier maximum-likelihood version (IQ-TREE):** not the same method, so
+  the trees differ; the neighbour-joining tree is fully reproducible.
+
+## 7. Known limits
+
+- If many database sequences are identical, more can be equally close than fit in the
+  tree; all are listed under *Closest matches* and ties are broken by database order.
+- Mixing whole genomes and fragments in one run compares only the overlapping region.
+- No maximum-likelihood trees: IQ-TREE as a Python package (piqtree) did not give
+  identical trees on repeated runs in our tests, and FastTree is not available as an R or
+  Python package.
+- At most 50 query sequences per run.
