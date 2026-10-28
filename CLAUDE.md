@@ -2,6 +2,8 @@
 
 HAV genomic analysis pipeline. See README.md for setup and usage.
 
+FHInumerics/ is a self-contained subproject with its own CLAUDE.md and tests; don't change it unless asked.
+
 ## Project management
 
 PM tracking file: `~/project_management/hav_dev.md`
