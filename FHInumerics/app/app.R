@@ -27,6 +27,15 @@ $(function() {
   $(document).on('click', '.fhi-menu .nav-link', function(e) { e.preventDefault(); setPage($(this).data('page')); });
   $(document).on('shiny:connected', function() { setPage('outbreak'); });
   Shiny.addCustomMessageHandler('set_page', setPage);
+  // SNP table: pointing at a number with a data-tip shows that text in a box next to
+  // the pointer (on the side with the most room).
+  $(document).on('mouseenter', 'td[data-tip]', function() { $('#fhi-cell-tip').text($(this).attr('data-tip')).show(); });
+  $(document).on('mousemove', 'td[data-tip]', function(e) {
+    var tip = $('#fhi-cell-tip'), right = e.clientX > window.innerWidth / 2, below = e.clientY < window.innerHeight / 2;
+    tip.css({left: right ? '' : e.clientX + 14, right: right ? window.innerWidth - e.clientX + 14 : '',
+             top: below ? e.clientY + 14 : '', bottom: below ? '' : window.innerHeight - e.clientY + 14});
+  });
+  $(document).on('mouseleave', 'td[data-tip]', function() { $('#fhi-cell-tip').hide(); });
   Shiny.addCustomMessageHandler('clear_file_input', function(id) {
     $('#' + id).closest('.input-group').find('input[type=text]').val('');
   });
@@ -118,8 +127,14 @@ ui <- page_sidebar(
                padding: 6px 8px; font-size: 12px; max-width: 380px; }
     .fhi-tip td { padding: 0 6px 0 0; vertical-align: top; }
     .fhi-tip td:first-child { color: #666; white-space: nowrap; }
+    #fhi-cell-tip { position: fixed; display: none; white-space: pre-line; }
+    td[data-tip]:hover { box-shadow: inset 0 0 0 3px #ff7f00; }
+    td.fhi-flag { position: relative; }
+    td.fhi-flag::after { content: ''; position: absolute; top: 0; right: 0; border-style: solid;
+                         border-width: 0 9px 9px 0; border-color: transparent #ff7f00 transparent transparent; }
     .fhi-ring { position: absolute; z-index: 999; pointer-events: none; border-radius: 50%;
                 border: 3px solid #ff7f00; box-shadow: 0 0 0 3px rgba(255,127,0,.3); }"))),
+  div(id = "fhi-cell-tip", class = "fhi-tip"),
   sidebar = sidebar(
     width = 380,
     menu,
@@ -129,7 +144,7 @@ ui <- page_sidebar(
   ),
   navset_hidden(
     id = "main",
-    nav_panel_hidden("outbreak", navset_card_tab(
+    nav_panel_hidden("outbreak", uiOutput("view_ui"), navset_card_tab(
       id = "tabs",
       nav_panel("Tree",
         layout_columns(col_widths = c(3, 6, 3),
@@ -212,7 +227,7 @@ server <- function(input, output, session) {
                        search = defaults$search, threads = defaults$threads,
                        exclude_self = from_viewer())
       withProgress(message = "Running", value = 0, {
-        steps <- 7
+        steps <- 3 + 3 * (length(queries) + (length(queries) > 1))   # see run_compare()
         run_compare(queries, cfg$databases[[input$db]], cfg, settings, log = log,
                     progress = function(step, detail = NULL) incProgress(1 / steps, step, detail))
       })
@@ -234,14 +249,37 @@ server <- function(input, output, session) {
     }
   })
 
-  tree_plot <- reactive({
-    req(result()$tree)
-    plot_tree(result(), input$colour_by, input$label_cols %||% character(0), input$show_support)
+  # With several queries, there is a result for all queries together and one for each
+  # query alone; the "Show results for" list above the tabs picks the one shown.
+  output$view_ui <- renderUI({
+    views <- req(result())$views
+    if (length(views) < 2) return(NULL)
+    failed <- vapply(views, function(v) !is.null(v$error), TRUE)
+    choices <- stats::setNames(names(views), paste0(names(views), ifelse(failed, " (no result)", "")))
+    div(class = "d-flex align-items-center gap-3 mb-2",
+        selectInput("view", "Show results for", choices, names(views)[!failed][1], width = "360px"),
+        p(class = "small text-muted mb-0",
+          "Each query is also compared on its own: its own closest sequences, over its whole length."))
   })
-  tree_height <- reactive(max(400, 22 * length(result()$tree$tip.label)))
+  view <- reactive({
+    views <- req(result())$views
+    v <- views[[input$view %||% ""]]
+    if (is.null(v)) v <- Filter(function(x) is.null(x$error), views)[[1]]   # just after a new run
+    v
+  })
+  view_error <- function() if (!is.null(view()$error)) div(class = "alert alert-warning", view()$error)
+  # Search hits and tie notes of the queries in the shown result.
+  view_rows <- function(tab) if (identical(view()$label, ALL_QUERIES)) tab else tab[tab$query %in% view()$label, , drop = FALSE]
+
+  tree_plot <- reactive({
+    req(view()$tree)
+    plot_tree(view(), input$colour_by, input$label_cols %||% character(0), input$show_support)
+  })
+  tree_height <- reactive(max(400, 22 * length(view()$tree$tip.label)))
   output$tree_ui <- renderUI({
     if (is.null(result())) return(p("Paste or choose sequences on the left and press Run comparison."))
-    if (is.null(result()$tree)) return(p("Too few sequences for a tree."))
+    if (!is.null(view()$error)) return(view_error())
+    if (is.null(view()$tree)) return(p("Too few sequences for a tree."))
     tagList(
       p(class = "small text-muted", "Point at the dot of a sample in the tree to see its details."),
       div(style = "position: relative;",
@@ -252,40 +290,62 @@ server <- function(input, output, session) {
   })
   output$tree <- renderPlot(tree_plot())
   output$dl_tree <- downloadHandler(
-    filename = function() paste0("tree_", input$colour_by, ".pdf"),
+    filename = function() paste0("tree_", gsub("[^A-Za-z0-9._-]+", "_", view()$label), "_", input$colour_by, ".pdf"),
     content = function(file) ggplot2::ggsave(file, tree_plot(), width = 11, height = tree_height() / 72, limitsize = FALSE)
   )
 
   output$tree_tip <- renderUI({
     hit <- tip_at(tree_plot()$data, input$tree_hover)
     if (is.null(hit)) return(NULL)
-    hover_box(input$tree_hover, hit, tip_details(result(), hit$label))
+    hover_box(input$tree_hover, hit, tip_details(view(), hit$label))
   })
 
   output$snp_note <- renderUI({
-    req(result())
-    p(sprintf("SNP differences over %d aligned positions; only positions where both sequences have A/C/G/T are counted. Rows and columns follow the tree order.",
-              result()$manifest$compared_columns))
+    v <- view()
+    if (!is.null(v$error)) return(view_error())
+    tagList(
+      p(sprintf(paste("SNP differences over %d aligned positions. A position counts when the two bases cannot be the same:",
+                      "ambiguity codes count only when they do not fit (K = G/T differs from A, M = A/C does not); N and gaps never count.",
+                      "Rows and columns follow the tree order. Queries are in red."), v$compared_columns)),
+      p(class = "small text-muted",
+        "Point at a number in a query's row or column to see which positions differ.",
+        "An orange corner marks pairs that also differ by gaps, Ns or ambiguity codes that fit (not counted as SNPs)."))
   })
   output$snp_table <- DT::renderDT({
-    res <- req(result())
-    snp <- res$snp
-    if (!is.null(res$tree)) {
-      d <- ggtree::fortify(res$tree)
+    v <- view()
+    snp <- req(v$snp)
+    if (!is.null(v$tree)) {
+      d <- ggtree::fortify(v$tree)
       ord <- d$label[d$isTip][order(d$y[d$isTip], decreasing = TRUE)]
       snp <- snp[ord, ord]
     }
     df <- data.frame(sequence = rownames(snp), snp, check.names = FALSE)
     brks <- c(0, 1, 3, 6, 11, 21)
-    DT::formatStyle(
-      DT::datatable(df, fillContainer = FALSE, rownames = FALSE, options = list(scrollX = TRUE, pageLength = 100, dom = "t")),
-      colnames(snp), backgroundColor = DT::styleInterval(brks - 0.5, c("white", "#08519c", "#3182bd", "#6baed6", "#9ecae1", "#c6dbef", "white")),
-      color = DT::styleInterval(c(-0.5, 2.5), c("black", "white", "black"))
-    )
+    # Query columns: the header is coloured like the query rows (0-based, after "sequence").
+    query_cols <- which(colnames(snp) %in% v$queries)
+    header_js <- DT::JS(sprintf(
+      "function(thead) { $(thead).find('th').each(function(i) { if ([%s].indexOf(i) >= 0) $(this).css({color: '#d7301f', 'background-color': '#fde0dd'}); }); }",
+      paste(query_cols, collapse = ",")))
+    # Hover text of the query cells (R/snps.R), attached to each cell as it is drawn;
+    # cells where the pair also differs by gaps, Ns or ambiguity codes get a corner mark.
+    tips <- snp_tips(v, unlist(result()$manifest$reverse_complemented))
+    cell_js <- DT::JS(sprintf(
+      "(function() { var tips = %s, flags = %s, cols = %s; return function(td, cellData, rowData, row, col) { var key = rowData[0] + '\\t' + cols[col]; if (tips[key]) td.setAttribute('data-tip', tips[key]); if (flags[key]) td.classList.add('fhi-flag'); }; })()",
+      jsonlite::toJSON(as.list(tips$text), auto_unbox = TRUE),
+      jsonlite::toJSON(as.list(tips$flagged[tips$flagged]), auto_unbox = TRUE), jsonlite::toJSON(colnames(df))))
+    table <- DT::datatable(df, fillContainer = FALSE, rownames = FALSE,
+                           options = list(scrollX = TRUE, pageLength = 100, dom = "t", headerCallback = header_js,
+                                          columnDefs = list(list(targets = "_all", createdCell = cell_js))))
+    table <- DT::formatStyle(table, colnames(snp),
+      backgroundColor = DT::styleInterval(brks - 0.5, c("white", "#08519c", "#3182bd", "#6baed6", "#9ecae1", "#c6dbef", "white")),
+      color = DT::styleInterval(c(-0.5, 2.5), c("black", "white", "black")))
+    DT::formatStyle(table, "sequence", fontWeight = DT::styleEqual(v$queries, "bold", default = "normal"),
+                    color = DT::styleEqual(v$queries, "#d7301f", default = "black"),
+                    backgroundColor = DT::styleEqual(v$queries, "#fde0dd", default = "white"))
   })
 
   output$ties_note <- renderUI({
-    ties <- req(result())$ties
+    ties <- view_rows(req(result())$ties)
     many <- ties[ties$n_equally_close > ties$n_shown, ]
     if (!NROW(many)) return(NULL)
     div(class = "alert alert-warning",
@@ -294,7 +354,7 @@ server <- function(input, output, session) {
           many$n_equally_close[i], many$query[i], many$best_pident[i], many$n_shown[i]))))
   })
   output$hits_table <- DT::renderDT({
-    hits <- req(result())$hits
+    hits <- view_rows(req(result())$hits)
     DT::datatable(hits, fillContainer = FALSE, rownames = FALSE, filter = "top",
                   options = list(scrollX = TRUE, pageLength = 25))
   })

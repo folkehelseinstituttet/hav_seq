@@ -24,5 +24,19 @@ matrices as with the IQ-TREE build; the tree is identical on repeated runs.
 
     Rscript cli/fhinumerics --query tests/fragments.fasta --out test_fragments
 
+Ambiguity-aware SNP counting (R/snps.R), 2026-10-28: `run_tests.R` checks each case
+(A/T, K/A, Y/A and R/Y differ; M/A, R/A, N and gaps do not) and that the hover box lists
+as many positions as the SNP matrix counts (whole-genome query: positions 3001 and 3101),
+and the hover text of a small alignment with a SNP, a missing start, a gap in each
+sequence, an ambiguity code that fits and an N.
+On a whole database:
+
+    Rscript tests/validate_snps.R data/demo/sequences.fasta 100
+
+Demo database: 26 of 1773 sequences have ambiguity codes. 126 aligned (all 26 + 100
+others), 7875 pairs: phangorn = independent count (Biostrings IUPAC table) for every pair;
+phangorn = old A/C/G/T-only count + ambiguity-code differences for every pair; 76 pairs
+(1.0%) went up (+1: 70, +2: 5, +3: 1), all others unchanged.
+
 FHInumerics 0.1.0 on 2026-10-28 (`tests/run_tests.R`, default settings: DECIPHER search and
 DECIPHER alignment): all checks passed. For the MAFFT comparison see MANUAL.md section 6.

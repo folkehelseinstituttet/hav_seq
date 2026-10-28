@@ -55,6 +55,13 @@ The menu at the top left switches between two pages:
 
 ### 2.2 Outbreak detection: results
 
+With several queries, a **Show results for** list appears above the tabs: *All queries
+together* (all queries and their closest sequences in one tree and matrix) or one query
+on its own (its own closest sequences, compared over its whole length). The list sets
+what the Tree, SNP distances and Closest matches tabs show. A result that could not be
+made (for example, queries from different genome regions cannot be compared together)
+is marked "(no result)" and its tabs say why.
+
 - **Tree**: the phylogeny. Queries are marked `(QUERY)`. Point at the dot of a sample to
   see a box with all its metadata (an orange ring marks the dot it belongs to); for a
   query, the box shows the closest sequence(s) in the tree and the number of SNPs.
@@ -63,8 +70,37 @@ The menu at the top left switches between two pages:
     Missing values are shown as `?`.
   - *Show bootstrap support (>= 70)*: support values on the branches.
   - *Download PDF*: the tree as shown.
-- **SNP distances**: the SNP matrix, rows and columns in tree order. Darker blue = fewer
-  differences: 0, 1-2, 3-5, 6-10, 11-20; 21 or more is white. The note above the table says
+- **SNP distances**: the SNP matrix, rows and columns in tree order. Queries are in red
+  (row names and column headers). Darker blue = fewer differences: 0, 1-2, 3-5, 6-10,
+  11-20; 21 or more is white. Point at a number in a query's row or column (an orange
+  frame marks it) to see a box with the number of SNPs, over how many positions they were
+  counted, and what differs. Positions are base numbers in the query; bases are given as
+  row/column. For example:
+
+  ```
+  V123 / S456
+  0 SNPs over 440 compared positions
+  Positions in V123:
+  Gaps (not counted):
+  1-19 - missing at the start of S456
+  46 - C/-
+  Ambiguity codes that fit (not counted):
+  47 - A/M
+  N (not compared): 3 in S456
+  ```
+
+  - *SNPs*: the counted differences (see 3.5), e.g. `52 - A/K`.
+  - *Gaps (not counted)*: bases missing at the start or end of a sequence, as one range;
+    gaps inside a sequence, one line per run of gaps (`46 - C/-`, or `after 120 - -/A`
+    when the other sequence has extra bases after query base 120).
+  - *Ambiguity codes that fit (not counted)*: an ambiguity code that can be the other base
+    (`47 - A/M`), so it is not a SNP, but the base is uncertain.
+  - *N (not compared)*: how many Ns each sequence has.
+
+  Up to 20 lines are listed per part. For a reverse-complemented query the numbers are on
+  its reverse complement. A small **orange corner** on a number means the pair also
+  differs by gaps, Ns or ambiguity codes that fit: "0 SNPs" there does not mean the two
+  sequences are identical letter for letter. The note above the table says
   over how many aligned positions the differences were counted.
 - **Closest matches**: all search hits for every query (also those not in the tree), with
   database metadata, filterable per column. `selected = TRUE` means the hit is in the tree.
@@ -130,6 +166,9 @@ Closing the browser tab stops FHInumerics (when started with the start file).
   be pasted); letters are made upper case; `U` becomes `T`.
 - Allowed letters: `ACGT` and the IUPAC ambiguity codes `RYKMSWBDHVN`. Anything else,
   empty entries and duplicate names stop the run with a message naming the sequence.
+- A query with the same name as a database sequence gets `_query` added to its name
+  (e.g. `V123_query`), so both can be told apart in the tree and SNP matrix. The run log
+  and the manifest (`renamed`) list these.
 
 ### 3.2 Database search (`R/search.R`)
 
@@ -150,6 +189,8 @@ Closing the browser tab stops FHInumerics (when started with the start file).
   database order**, so the same input always gives the same neighbours.
 - The top N per query are kept (*closest sequences per query*); all queries' neighbours
   together form the sequence set for the alignment.
+- With several queries, steps 3.4-3.6 are done for **all queries together** and again
+  for **each query alone** (that query and its own N neighbours).
 - Ties are counted: how many database sequences have the same identity and length as the
   best hit. If more are equally close than are shown, the run log and the *Closest
   matches* tab say so; `closest_summary.tsv` has the numbers.
@@ -164,17 +205,42 @@ Closing the browser tab stops FHInumerics (when started with the start file).
   start to the earliest query end. All-gap columns are removed. Database sequences that
   have A/C/G/T in less than 50% of that region are dropped (named in the run log).
   This way all distances are counted over the same positions.
-- If the queries do not overlap at all (e.g. different genome regions), the run stops and
-  asks you to run them separately.
+- A query on its own is trimmed to its own length, so it is often compared over more
+  positions than in the result for all queries together.
+- If the queries do not overlap at all (e.g. different genome regions), there is no
+  result for all queries together; each query's own result is still made.
 
-### 3.5 SNP distances
+### 3.5 SNP distances (`R/snps.R`)
 
-- `ape::dist.dna(model = "N", pairwise.deletion = TRUE)`: for each pair, the number of
-  differences at positions where **both** sequences have A, C, G or T. Gaps, N and
-  ambiguity codes are skipped for that pair only. These are the same numbers as
-  snp-dists gives.
-- `compared_sites.tsv` gives, for each pair, how many positions were compared (the
-  denominator of the SNP count).
+- `phangorn::dist.hamming(ratio = FALSE, exclude = "none")`: for each pair, the number of
+  positions where the two bases **cannot be the same**. IUPAC ambiguity codes count by
+  what they can be:
+
+  | Bases | Counted? | Why |
+  |---|---|---|
+  | A / T | yes | different bases |
+  | A / M (A or C) | no | M can be A |
+  | A / K (G or T) | yes | K cannot be A |
+  | R (A/G) / Y (C/T) | yes | no base in common |
+  | R (A/G) / M (A/C) | no | both can be A |
+  | anything / N | no | N can be anything |
+  | anything / gap | no | gaps are not counted (see below) |
+
+- For two sequences with only A/C/G/T at the compared positions this gives the same numbers
+  as before (and as snp-dists); ambiguity codes can only add differences, never remove
+  them. Before (up to FHInumerics 0.2.0) ambiguity codes were skipped like N:
+  `ape::dist.dna(model = "N", pairwise.deletion = TRUE)`.
+- **Gaps are not counted** (an insertion or deletion is not a SNP), and positions where
+  one sequence has a gap are not compared. A sequence that is shorter than the query is
+  compared only where it has bases.
+- `compared_sites.tsv` gives, for each pair, how many positions were compared: positions
+  where both have a base other than N or a gap (ambiguity codes included). This is the
+  denominator of the SNP count, and the "compared positions" in the hover box.
+- The tree is not affected by this: it uses its own distances (3.6), which still skip
+  ambiguity codes.
+- Checks: `tests/run_tests.R` checks each case in the table, and that the hover box lists
+  as many positions as the matrix counts. `tests/validate_snps.R <fasta>` compares the
+  count with an independent one and with the old count on a whole database.
 
 ### 3.6 Tree
 
@@ -196,11 +262,15 @@ Each run makes its own folder `<date>-<time>_<first query name>` in the results 
 | `closest_summary.tsv` | per query: best identity, best mismatches, how many are equally close, how many shown |
 | `alignment.fasta` | the trimmed alignment used for SNPs and tree |
 | `snp_matrix.tsv` | SNP differences between all sequences |
-| `compared_sites.tsv` | number of compared positions per pair |
+| `compared_sites.tsv` | number of compared positions per pair (both have a base other than N or a gap) |
 | `tree.nwk` | the tree (Newick, bootstrap support as node labels) |
 | `tree_metadata.tsv` | metadata of every tip in the tree |
 | `run_manifest.yaml` | settings, method description, database file and checksum, queries, reverse-complemented queries, FHInumerics version and the version of every package and tool |
 | `work/` | intermediate files (internal IDs, untrimmed alignment) |
+| `per_query/NN_<name>/` | with several queries: each query's own `alignment.fasta`, `snp_matrix.tsv`, `compared_sites.tsv`, `tree.nwk`, `tree_metadata.tsv` (and `work/`). The files above are for all queries together |
+
+`run_manifest.yaml` lists under `results` each result (all queries together, then each
+query) with its folder, number of neighbours and compared positions, or why it failed.
 
 ## 5. Settings (`config.yaml`)
 

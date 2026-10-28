@@ -1,6 +1,8 @@
 # Compare query sequences to a reference database:
 # search -> closest neighbours -> MAFFT alignment -> trim to the query region ->
 # SNP matrix (ape) -> neighbour-joining tree (ape, midpoint rooted).
+# With several queries, the steps after the search run for all queries together and
+# for each query alone (its own neighbours, compared over its own length).
 #
 # Used by both the Shiny app (app.R) and the command line (cli/fhinumerics),
 # so both give identical results. Everything runs on this computer, inside R or
@@ -15,6 +17,9 @@ DEFAULT_SETTINGS <- list(
   threads = 4,            # search and alignment
   exclude_self = FALSE    # drop hits to the database entry with the query's own name
 )
+
+# Name of the result for all queries together (a FASTA name cannot contain spaces).
+ALL_QUERIES <- "All queries together"
 
 ALIGNERS <- c("MAFFT (--auto, pymafft)" = "mafft", "DECIPHER AlignSeqs (R only)" = "decipher")
 
@@ -38,8 +43,16 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
   ref <- prepare_db(db, cfg, settings$search, log = log)
   meta <- read_metadata(db)
 
-  # Internal IDs (Q1, Q2, ...) keep tool input free of odd characters.
-  q_ids <- data.frame(internal = paste0("Q", seq_along(queries)), id = names(queries))
+  # Internal IDs (Q1, Q2, ...) keep tool input free of odd characters. A query with the
+  # name of a database sequence gets "_query" added, so the two do not share a name in
+  # the tree and SNP matrix.
+  q_ids <- data.frame(internal = paste0("Q", seq_along(queries)), id = names(queries), given = names(queries))
+  clash <- q_ids$id %in% ref$ids$id
+  q_ids$id[clash] <- paste0(q_ids$id[clash], "_query")
+  if (any(clash)) {
+    log("Renamed (a database sequence has the same name): ",
+        paste(q_ids$given[clash], "->", q_ids$id[clash], collapse = ", "))
+  }
   q_internal <- queries
   names(q_internal) <- q_ids$internal
   write_fasta(q_internal, file.path(work, "query_internal.fasta"))
@@ -52,8 +65,8 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
   hits$subject <- ref$ids$id[match(hits$sseqid, ref$ids$internal)]
   # Queries taken from the database itself (Database viewer) would find their own entry.
   if (isTRUE(settings$exclude_self)) {
-    self <- hits$query == hits$subject
-    if (any(self)) log("Left out each query's own database entry: ", paste(unique(hits$query[self]), collapse = ", "))
+    self <- q_ids$given[match(hits$qseqid, q_ids$internal)] == hits$subject
+    if (any(self)) log("Left out each query's own database entry: ", paste(unique(hits$subject[self]), collapse = ", "))
     hits <- hits[!self, ]
   }
 
@@ -74,8 +87,6 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
     log("WARNING: no neighbours found for ", paste(q_ids$id[q_ids$internal %in% no_hits], collapse = ", "),
         " (no hit covers >= ", settings$min_coverage, "% of it)")
   }
-  neighbour_ids <- unique(kept$sseqid)
-  log("Neighbours selected: ", length(neighbour_ids), " database sequences")
 
   # How many database sequences are as close as the best hit? With many identical
   # sequences in a database, more can tie than fit in the tree.
@@ -99,11 +110,86 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
   for (q in flipped) q_internal[[q]] <- reverse_complement(q_internal[[q]])
   if (length(flipped)) log("Reverse-complemented: ", paste(q_ids$id[match(flipped, q_ids$internal)], collapse = ", "))
 
+  # ---- 3-5. Alignment, SNPs and tree, for all queries together and for each alone ----
+  # With one query there is one result, in the run folder. With several, the result for
+  # all queries together is in the run folder and each query's own in per_query/.
+  sets <- as.list(q_ids$internal)
+  names(sets) <- q_ids$id
+  folders <- out_dir
+  if (length(queries) > 1) {
+    sets <- c(stats::setNames(list(q_ids$internal), ALL_QUERIES), sets)
+    folders <- c(out_dir, file.path(out_dir, "per_query", sprintf("%02d_%s", seq_along(queries),
+                                                                  gsub("[^A-Za-z0-9._-]+", "_", q_ids$id))))
+  }
+  run_set <- function(i) {
+    say <- if (length(sets) > 1) function(...) log(names(sets)[i], ": ", ...) else log
+    compare_set(sets[[i]], names(sets)[i], q_internal, q_ids, kept, ref, meta, cfg, settings, folders[i],
+                progress = function(step) progress(step, if (length(sets) > 1) names(sets)[i]), log = say)
+  }
+  views <- if (length(sets) == 1) list(run_set(1)) else lapply(seq_along(sets), function(i) {
+    tryCatch(run_set(i), error = function(e) {
+      log("WARNING: no result for ", names(sets)[i], ": ", conditionMessage(e))
+      list(label = names(sets)[i], error = conditionMessage(e))
+    })
+  })
+  names(views) <- names(sets)
+  failed <- vapply(views, function(v) !is.null(v$error), TRUE)
+  if (all(failed)) stop(views[[1]]$error, call. = FALSE)
+
+  # ---- 6. Search results and manifest ----------------------------------------------
+  progress("Writing results")
+  hits_out <- merge(hits[, c("query", "subject", "pident", "length", "mismatch", "gapopen",
+                             "qcovhsp", "qlen", "slen", "score", "sstrand", "selected")],
+                    meta, by.x = "subject", by.y = "id", all.x = TRUE, sort = FALSE)
+  hits_out <- hits_out[order(hits_out$query, -hits_out$pident, -hits_out$score),
+                       c("query", setdiff(names(hits_out), "query"))]
+  utils::write.table(hits_out, file.path(out_dir, "search_hits.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
+
+  manifest <- list(
+    created = format(started, "%Y-%m-%d %H:%M:%S"),
+    user = Sys.info()[["user"]],
+    computer = Sys.info()[["nodename"]],
+    app_version = app_version(),
+    database = list(name = db$name, fasta = db$fasta, metadata = db$metadata,
+                    fasta_md5 = ref$checksum, n_sequences = length(ref$seqs)),
+    queries = as.list(names(queries)),
+    renamed = as.list(stats::setNames(q_ids$id[clash], q_ids$given[clash])),
+    reverse_complemented = as.list(q_ids$id[match(flipped, q_ids$internal)]),
+    settings = settings,
+    results = lapply(seq_along(views), function(i) {
+      v <- views[[i]]
+      c(list(queries = names(sets)[i], folder = if (i == 1) "." else file.path("per_query", basename(folders[i]))),
+        if (is.null(v$error)) list(neighbours = v$neighbours, compared_columns = v$compared_columns)
+        else list(error = v$error))
+    }),
+    tools = tool_versions(cfg, settings),
+    method = method_text(settings)
+  )
+  yaml::write_yaml(manifest, file.path(out_dir, "run_manifest.yaml"))
+  log("Finished in ", round(as.numeric(difftime(Sys.time(), started, units = "secs"))), " s")
+
+  utils::write.table(ties, file.path(out_dir, "closest_summary.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
+  list(out_dir = out_dir, hits = hits_out, ties = ties, queries = q_ids$id, views = views, manifest = manifest,
+       display_columns = display_columns(db, meta))
+}
+
+# Alignment, SNP matrix and tree for one set of queries (internal IDs `q`) and their
+# kept neighbours; writes them to `out_dir`. Returns the results with real names.
+compare_set <- function(q, label, q_internal, q_ids, kept, ref, meta, cfg, settings, out_dir,
+                        progress = function(step) NULL, log = message) {
+  work <- file.path(out_dir, "work")
+  dir.create(work, recursive = TRUE, showWarnings = FALSE)
+  neighbour_ids <- unique(kept$sseqid[kept$qseqid %in% q])
+  if (!length(neighbour_ids)) {
+    stop("No database sequence covers at least ", settings$min_coverage, "% of ", label, ".", call. = FALSE)
+  }
+  log("Neighbours selected: ", length(neighbour_ids), " database sequences")
+
   # ---- 3. Alignment -------------------------------------------------------------
-  progress(paste0("Aligning sequences (", names(ALIGNERS)[ALIGNERS == settings$aligner], ")"),
-           paste(length(q_internal) + length(neighbour_ids), "sequences"))
-  combined <- c(q_internal, ref$seqs[match(neighbour_ids, ref$ids$internal)])
-  names(combined) <- c(names(q_internal), neighbour_ids)
+  progress(paste0("Aligning sequences (", names(ALIGNERS)[ALIGNERS == settings$aligner], ", ",
+                  length(q) + length(neighbour_ids), " sequences)"))
+  combined <- c(q_internal[q], ref$seqs[match(neighbour_ids, ref$ids$internal)])
+  names(combined) <- c(q, neighbour_ids)
   write_fasta(combined, file.path(work, "combined.fasta"))
   if (settings$aligner == "mafft") {
     run_python(cfg, c("align", file.path(work, "combined.fasta"), file.path(work, "aligned.fasta"),
@@ -115,7 +201,7 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
   aln <- read_alignment(file.path(work, "aligned.fasta"))
 
   # Trim to the region every query covers, so all comparisons use the same positions.
-  trimmed <- trim_to_queries(aln, names(q_internal))
+  trimmed <- trim_to_queries(aln, q)
   if (!is.null(trimmed$dropped)) {
     log("WARNING: dropped (covers < 50% of the compared region): ",
         paste(ref$ids$id[match(trimmed$dropped, ref$ids$internal)], collapse = ", "))
@@ -125,20 +211,22 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
   aln_file <- file.path(work, "aligned_trimmed.fasta")
   write_fasta(aln_t, aln_file)
 
+  # Each query's own base number for every column left after trimming (for the hover
+  # text that lists differing positions).
+  positions <- lapply(q, function(id) cumsum(strsplit(aln[[id]], "")[[1]] != "-")[trimmed$cols])
+
   # ---- 4. SNP distances ---------------------------------------------------------
-  # ape::dist.dna(model = "N", pairwise.deletion = TRUE) counts differences at positions
-  # where both sequences have A/C/G/T: the same numbers as snp-dists.
-  progress("Counting SNP differences (ape)")
-  dna <- ape::read.dna(aln_file, format = "fasta")
-  snp <- as.matrix(ape::dist.dna(dna, model = "N", pairwise.deletion = TRUE))
-  storage.mode(snp) <- "integer"
+  # Ambiguity codes count only when they cannot match; N and gaps never (R/snps.R).
+  progress("Counting SNP differences (phangorn)")
+  snp <- snp_matrix(aln_t)
   sites <- comparable_sites(aln_t)
+  dna <- ape::read.dna(aln_file, format = "fasta")
 
   # ---- 5. Tree ------------------------------------------------------------------
   tree <- NULL
   if (length(aln_t) >= 3) {
     boot <- settings$bootstrap && length(aln_t) >= 4
-    progress("Building tree (neighbour-joining)", if (boot) "with 100 bootstraps" else NULL)
+    progress(paste0("Building tree (neighbour-joining", if (boot) ", 100 bootstraps", ")"))
     tree <- nj_tree(dna, bootstrap = boot)
     ape::write.tree(tree, file.path(work, "nj.nwk"))
     tree <- phangorn::midpoint(tree, node.labels = "support")
@@ -146,9 +234,8 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
     log("WARNING: fewer than 3 sequences; no tree built")
   }
 
-  # ---- 6. Results with real names -------------------------------------------------
-  progress("Writing results")
-  all_ids <- rbind(q_ids, ref$ids[ref$ids$internal %in% names(aln_t), ])
+  # ---- Results with real names --------------------------------------------------
+  all_ids <- rbind(q_ids[, c("internal", "id")], ref$ids[ref$ids$internal %in% names(aln_t), c("internal", "id")])
   real <- function(x) all_ids$id[match(x, all_ids$internal)]
 
   dimnames(snp) <- list(real(rownames(snp)), real(colnames(snp)))
@@ -158,13 +245,6 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
   tips <- data.frame(id = real(names(aln_t)), is_query = names(aln_t) %in% q_ids$internal)
   tip_meta <- merge(tips, meta, by = "id", all.x = TRUE, sort = FALSE)
 
-  hits_out <- merge(hits[, c("query", "subject", "pident", "length", "mismatch", "gapopen",
-                             "qcovhsp", "qlen", "slen", "score", "sstrand", "selected")],
-                    meta, by.x = "subject", by.y = "id", all.x = TRUE, sort = FALSE)
-  hits_out <- hits_out[order(hits_out$query, -hits_out$pident, -hits_out$score),
-                       c("query", setdiff(names(hits_out), "query"))]
-
-  utils::write.table(hits_out, file.path(out_dir, "search_hits.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
   utils::write.table(cbind(id = rownames(snp), as.data.frame(snp, check.names = FALSE)),
                      file.path(out_dir, "snp_matrix.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
   utils::write.table(cbind(id = rownames(sites), as.data.frame(sites, check.names = FALSE)),
@@ -175,28 +255,10 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
   write_fasta(aln_real, file.path(out_dir, "alignment.fasta"))
   if (!is.null(tree)) ape::write.tree(tree, file.path(out_dir, "tree.nwk"))
 
-  manifest <- list(
-    created = format(started, "%Y-%m-%d %H:%M:%S"),
-    user = Sys.info()[["user"]],
-    computer = Sys.info()[["nodename"]],
-    app_version = app_version(),
-    database = list(name = db$name, fasta = db$fasta, metadata = db$metadata,
-                    fasta_md5 = ref$checksum, n_sequences = length(ref$seqs)),
-    queries = as.list(names(queries)),
-    reverse_complemented = as.list(q_ids$id[match(flipped, q_ids$internal)]),
-    settings = settings,
-    neighbours = length(neighbour_ids),
-    compared_columns = nchar(aln_t[1]),
-    tools = tool_versions(cfg, settings),
-    method = method_text(settings)
-  )
-  yaml::write_yaml(manifest, file.path(out_dir, "run_manifest.yaml"))
-  log("Finished in ", round(as.numeric(difftime(Sys.time(), started, units = "secs"))), " s")
-
-  utils::write.table(ties, file.path(out_dir, "closest_summary.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
-  list(out_dir = out_dir, hits = hits_out, ties = ties, snp = snp, sites = sites, tree = tree,
-       tip_meta = tip_meta, queries = names(queries), manifest = manifest,
-       display_columns = display_columns(db, meta))
+  names(positions) <- real(q)
+  list(label = label, queries = real(q), snp = snp, sites = sites, tree = tree, tip_meta = tip_meta,
+       aln = aln_real, positions = positions,
+       neighbours = length(neighbour_ids), compared_columns = nchar(aln_t[1]), out_dir = out_dir)
 }
 
 # Neighbour-joining tree (ape): BIONJ on TN93 distances (pairwise deletion), with
@@ -214,6 +276,7 @@ nj_tree <- function(dna, bootstrap = TRUE) {
 
 # Keep the columns between the latest query start and the earliest query end;
 # then drop all-gap columns and sequences covering < 50% of that region.
+# Returns the trimmed alignment, the dropped sequences and the kept columns' numbers.
 trim_to_queries <- function(aln, query_ids) {
   chars <- do.call(rbind, strsplit(aln, ""))
   rownames(chars) <- names(aln)
@@ -221,26 +284,19 @@ trim_to_queries <- function(aln, query_ids) {
   from <- max(spans[, 1])
   to <- min(spans[, 2])
   if (from >= to) {
-    stop("The query sequences cover different parts of the genome and do not overlap. ",
-         "Run them separately.", call. = FALSE)
+    stop("The query sequences cover different parts of the genome and do not overlap, ",
+         "so they cannot be compared together. Each query's own result is still made.", call. = FALSE)
   }
-  chars <- chars[, from:to, drop = FALSE]
+  cols <- from:to
+  chars <- chars[, cols, drop = FALSE]
+  cols <- cols[colSums(chars != "-") > 0]
   chars <- chars[, colSums(chars != "-") > 0, drop = FALSE]
   acgt <- matrix(chars %in% c("A", "C", "G", "T"), nrow = nrow(chars))
   covered <- rowMeans(acgt)
   drop <- setdiff(rownames(chars)[covered < 0.5], query_ids)
   chars <- chars[!rownames(chars) %in% drop, , drop = FALSE]
   out <- apply(chars, 1, paste, collapse = "")
-  list(aln = out, dropped = if (length(drop)) drop else NULL)
-}
-
-# Number of positions where both sequences have A/C/G/T (the denominator of the SNP counts).
-comparable_sites <- function(aln) {
-  ok <- do.call(rbind, strsplit(aln, "")) %in% c("A", "C", "G", "T")
-  ok <- matrix(ok, nrow = length(aln))
-  sites <- tcrossprod(ok * 1)
-  dimnames(sites) <- list(names(aln), names(aln))
-  sites
+  list(aln = out, dropped = if (length(drop)) drop else NULL, cols = cols)
 }
 
 method_text <- function(settings) {
@@ -255,8 +311,11 @@ method_text <- function(settings) {
       mafft = "Alignment: MAFFT --auto (pymafft).",
       decipher = "Alignment: DECIPHER AlignSeqs."),
     "Alignment trimmed to the columns covered by every query.",
-    "SNPs: ape::dist.dna(model = 'N', pairwise.deletion = TRUE), i.e. differences at positions where",
-    "both sequences have A/C/G/T (as snp-dists).",
+    "With several queries, alignment, SNPs and tree are made for all queries together (all their",
+    "neighbours) and for each query alone (its own neighbours, trimmed to its own length).",
+    "SNPs: phangorn::dist.hamming(ratio = FALSE, exclude = 'none'): a position counts when the two",
+    "bases cannot be the same (IUPAC ambiguity codes count only when they cannot match; N and gaps",
+    "never count).",
     "Tree: ape::bionj on TN93 distances (pairwise deletion), negative branch lengths set to 0,",
     "+ 100 bootstraps (ape::boot.phylo, seed 1) when bootstrap is on and >= 4 sequences;",
     "midpoint rooted (phangorn::midpoint)."

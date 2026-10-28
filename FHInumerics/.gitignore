@@ -4,5 +4,7 @@ cache/
 tools/
 databases/
 docs/
+# validation data and baselines (in-house sequences)
+validation/
 CLAUDE.md
 *.Rhistory

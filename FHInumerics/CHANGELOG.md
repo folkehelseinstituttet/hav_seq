@@ -3,6 +3,31 @@
 All notable changes to FHInumerics. The version is in `VERSION` and is written into every
 run's `run_manifest.yaml`. Newest first.
 
+## Unreleased
+
+- **SNP counting takes ambiguity codes into account** (phangorn `dist.hamming` instead of
+  ape `dist.dna`): an ambiguity code counts as a SNP only when it cannot match the other
+  base (K = G/T vs A counts; M = A/C vs A does not). Before, ambiguity codes were skipped
+  like N. N and gaps are still never counted. SNP numbers can go up for sequences with
+  ambiguity codes; others are unchanged. Compared positions now include ambiguity codes.
+- SNP distances: point at a number in a query's row or column to see the differing
+  positions (base number in the query and the two bases, e.g. `52 - A/K`), and what is
+  not counted: gaps (missing ends as a range, gaps inside per position), ambiguity codes
+  that fit (e.g. `47 - A/M`) and the number of Ns. An orange corner marks numbers where
+  the pair differs by any of these.
+- Several queries: besides the result for all queries together, each query gets its own
+  result (its own closest sequences, alignment over its whole length, tree and SNP
+  matrix). A **Show results for** list above the tabs switches between them; the Closest
+  matches tab shows only the chosen query's hits. Saved in `per_query/` in the run folder.
+- Queries that do not overlap no longer stop the run: there is no result for all
+  queries together, but each query's own result is made.
+- SNP distances: queries are shown in red (row names and column headers).
+- A query with the same name as a database sequence is renamed `<name>_query`; before,
+  the two had the same name in the tree and SNP matrix, and the query got the database
+  sample's metadata.
+- `run_manifest.yaml`: new `renamed` and `results` (per result: folder, neighbours,
+  compared positions); `neighbours` and `compared_columns` moved into `results`.
+
 ## 0.2.0 - 2026-10-28
 
 - Menu at the top left with two pages: **Outbreak detection** (the comparison, as before)
