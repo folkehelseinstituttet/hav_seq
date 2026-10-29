@@ -159,7 +159,8 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
     results = lapply(seq_along(views), function(i) {
       v <- views[[i]]
       c(list(queries = names(sets)[i], folder = if (i == 1) "." else file.path("per_query", basename(folders[i]))),
-        if (is.null(v$error)) list(neighbours = v$neighbours, compared_columns = v$compared_columns)
+        if (is.null(v$error)) list(neighbours = v$neighbours, compared_columns = v$compared_columns,
+                                   compared_region = v$compared_region, dropped = as.list(v$dropped))
         else list(error = v$error))
     }),
     tools = tool_versions(cfg, settings),
@@ -235,7 +236,7 @@ compare_set <- function(q, label, q_internal, q_ids, kept, ref, meta, cfg, setti
   }
 
   # ---- Results with real names --------------------------------------------------
-  all_ids <- rbind(q_ids[, c("internal", "id")], ref$ids[ref$ids$internal %in% names(aln_t), c("internal", "id")])
+  all_ids <- rbind(q_ids[, c("internal", "id")], ref$ids[ref$ids$internal %in% names(aln), c("internal", "id")])
   real <- function(x) all_ids$id[match(x, all_ids$internal)]
 
   dimnames(snp) <- list(real(rownames(snp)), real(colnames(snp)))
@@ -254,10 +255,19 @@ compare_set <- function(q, label, q_internal, q_ids, kept, ref, meta, cfg, setti
   names(aln_real) <- real(names(aln_t))
   write_fasta(aln_real, file.path(out_dir, "alignment.fasta"))
   if (!is.null(tree)) ape::write.tree(tree, file.path(out_dir, "tree.nwk"))
+  # The whole alignment (before trimming) for the Alignment page: compared_cols are its
+  # columns that were compared, `dropped` the sequences left out by trimming.
+  aln_full <- aln
+  names(aln_full) <- real(names(aln))
+  write_fasta(aln_full, file.path(out_dir, "alignment_untrimmed.fasta"))
 
   names(positions) <- real(q)
   list(label = label, queries = real(q), snp = snp, sites = sites, tree = tree, tip_meta = tip_meta,
-       aln = aln_real, positions = positions,
+       aln = aln_real, positions = positions, aln_full = aln_full, compared_cols = trimmed$cols,
+       aln_meta = merge(data.frame(id = names(aln_full), is_query = names(aln) %in% q_ids$internal), meta,
+                        by = "id", all.x = TRUE, sort = FALSE),
+       compared_region = sprintf("%d-%d", min(trimmed$cols), max(trimmed$cols)),
+       dropped = if (is.null(trimmed$dropped)) character(0) else real(trimmed$dropped),
        neighbours = length(neighbour_ids), compared_columns = nchar(aln_t[1]), out_dir = out_dir)
 }
 

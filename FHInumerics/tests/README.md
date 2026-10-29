@@ -40,3 +40,10 @@ phangorn = old A/C/G/T-only count + ambiguity-code differences for every pair; 7
 
 FHInumerics 0.1.0 on 2026-10-28 (`tests/run_tests.R`, default settings: DECIPHER search and
 DECIPHER alignment): all checks passed. For the MAFFT comparison see MANUAL.md section 6.
+
+Alignment viewer (R/msa.R, decision 0011), 2026-10-29: `run_tests.R` checks each cell
+class on a small alignment, the consensus rules, variable and anchor-gap columns, base
+numbers, subsets and "closest N" ties, and on the real runs, with every sequence as
+anchor, that the differences equal the SNP matrix and that SNP and strong-ambiguity cells
+are exactly `snp_columns()`. The reverse-complemented genome's SNPs are at its positions
+3001 and 3101, as in the SNP hover box.

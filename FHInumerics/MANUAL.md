@@ -25,11 +25,12 @@ code (`R/compare.R`), so they give identical results for the same input and sett
 
 ## 2. Using the window
 
-The menu at the top left switches between two pages:
+The menu at the top left switches between three pages:
 
 - **Outbreak detection**: compare new sequences to a database (sections 2.1-2.2).
 - **Database viewer**: browse, filter and chart a database, and pick samples from it
   (section 2.3).
+- **Alignment**: see the aligned sequences, coloured where they differ (section 2.4).
 
 ### 2.1 Outbreak detection: input and settings
 
@@ -70,6 +71,8 @@ is marked "(no result)" and its tabs say why.
     Missing values are shown as `?`.
   - *Show bootstrap support (>= 70)*: support values on the branches.
   - *Download PDF*: the tree as shown.
+  - Drag up or down over the tree to choose the samples in that part, then press *Show in
+    Alignment*.
 - **SNP distances**: the SNP matrix, rows and columns in tree order. Queries are in red
   (row names and column headers). Darker blue = fewer differences: 0, 1-2, 3-5, 6-10,
   11-20; 21 or more is white. Point at a number in a query's row or column (an orange
@@ -102,6 +105,10 @@ is marked "(no result)" and its tabs say why.
   differs by gaps, Ns or ambiguity codes that fit: "0 SNPs" there does not mean the two
   sequences are identical letter for letter. The note above the table says
   over how many aligned positions the differences were counted.
+  All rows are shown on one page.
+  - Click **names** to choose rows (click again to un-choose), then *Show in Alignment*.
+  - Click a **number** in a query's row or column to open just that pair in the Alignment
+    page, compared with the query, at their first SNP.
 - **Closest matches**: all search hits for every query (also those not in the tree), with
   database metadata, filterable per column. `selected = TRUE` means the hit is in the tree.
   If more database sequences are equally close than fit in the tree, a yellow note says so
@@ -153,6 +160,76 @@ Right side (tabs):
   show the whole world. Works without internet.
 
 Each chart can be downloaded as a PDF.
+
+### 2.4 Alignment
+
+Shows an alignment with every sequence compared with an **anchor**: by default the
+**majority consensus** (no anchor sequence chosen). The blue line above the alignment
+always says what is compared with what.
+
+Left side (settings):
+
+- **Show**: *Results of the last run* (with a *Result* list that follows *Show results
+  for*), *An earlier run folder* (*Choose a run folder...*, then a result in it), or *An
+  aligned FASTA file* (all sequences the same length, gaps as `-`).
+- **Show a query and its closest** (run results): a query and its N closest sequences by
+  SNPs. When more are as close as number N, they are all shown, and a note says so.
+  **Show all sequences** goes back to all rows.
+- **Compare with**: the majority consensus or one sequence (the anchor). Also: right-click
+  a name or a row and choose *Use ... as anchor* (or *Compare with the majority
+  consensus*).
+- **Variable columns only**: hide columns where no sequence differs from the anchor
+  (SNPs, ambiguity codes, indels; no data does not count). A red tick on the column
+  ruler marks where columns were skipped.
+- **Hide columns that are a gap in the anchor**: hide columns where the anchor has a gap
+  inside it (extra bases in other sequences). A purple mark on the anchor row shows
+  where; point at it to see how many columns.
+- **Consensus settings** (closed by default): per column, the most common of A/C/G/T
+  wins; an ambiguity code splits its vote (R = half A, half G); N, gaps and missing ends
+  do not vote. A column where most sequences have a gap is `-`; a column without any
+  base is N. *When the most common base is not clear*: an ambiguity code (A/G tie = R,
+  default) or N. *The most common base must reach a threshold* (50-100%): otherwise the
+  ambiguity code of the fewest bases that together reach it (or N).
+- **Download**: *FASTA (whole)*, *FASTA (columns on screen)*, *PDF (on screen)*, *Picture
+  (PNG)* and *Interactive page (HTML)*: one file that opens in any browser without
+  FHInumerics (zoom, move, sort and point at cells work; it keeps the anchor chosen when
+  it was made). It contains the sequences and metadata shown, so share it like the data.
+  Rows are in the order shown, the anchor first.
+
+Above the alignment:
+
+- A bar with **Sort rows** (tree order for run results, fewest or most SNPs, name, sample
+  date), **Go to position** (a base number in the anchor), **Zoom in**, **Zoom out**,
+  **Whole alignment**, **Letters**, **Previous / Next difference** (a SNP or indel in any
+  row, or only in the row you clicked), and which columns are on screen.
+- The **overview**: how many sequences differ from the anchor in each column, along the
+  whole alignment (red where 3 or more differ; the compared region of a run is unshaded).
+  The blue box is the part on screen: click or drag it to move.
+- The colour key.
+
+The alignment:
+
+- The anchor is the top row. Queries are in red. After each name: the sample date (if the
+  data has dates) and the number of SNPs to the anchor, counted like the SNP table (over
+  the compared region for run results, so with a sequence as anchor it is the number in
+  the SNP table; over the whole alignment otherwise).
+- Only what differs from the anchor is drawn: **red-orange** a SNP; **dark blue** an
+  ambiguity code that cannot match the anchor (counted as a SNP); **light blue** an
+  ambiguity code that fits (not counted); **purple** an indel (a gap where the anchor has
+  a base, or extra bases where the anchor has a gap; never counted as a SNP); **light
+  grey** no data (N, or the missing start or end of a sequence); **grey with a letter**
+  the anchor has no base there, so there is nothing to compare. Zoomed in to letters, `·`
+  means the same as the anchor. For run results, the alignment is shown before trimming:
+  columns outside the compared region are greyed. Sequences left out by trimming
+  (covering less than half of the compared region) have grey names.
+- **Mouse wheel** over the alignment zooms at the pointer; **drag** moves;
+  **double-click** shows the whole alignment. When zoomed out, a pixel covers several
+  columns and shows the most important colour among them (SNP first).
+- **Point** at a cell: the sequence, its date and metadata, its totals (SNPs, indel
+  events and columns, ambiguity codes, % no data), the alignment column, its base number
+  in this sequence and in the anchor (as in the SNP table's box; for a reverse-complemented
+  query, on its reverse complement), the two bases, what the colour means, and how many
+  sequences differ there. **Click** a name to choose that row for Previous/Next difference.
 
 Closing the browser tab stops FHInumerics (when started with the start file).
 
@@ -261,6 +338,7 @@ Each run makes its own folder `<date>-<time>_<first query name>` in the results 
 | `search_hits.tsv` | all search hits with database metadata; `selected` = in the tree |
 | `closest_summary.tsv` | per query: best identity, best mismatches, how many are equally close, how many shown |
 | `alignment.fasta` | the trimmed alignment used for SNPs and tree |
+| `alignment_untrimmed.fasta` | the whole alignment before trimming, with real names (shown in the Alignment page) |
 | `snp_matrix.tsv` | SNP differences between all sequences |
 | `compared_sites.tsv` | number of compared positions per pair (both have a base other than N or a gap) |
 | `tree.nwk` | the tree (Newick, bootstrap support as node labels) |
@@ -270,7 +348,9 @@ Each run makes its own folder `<date>-<time>_<first query name>` in the results 
 | `per_query/NN_<name>/` | with several queries: each query's own `alignment.fasta`, `snp_matrix.tsv`, `compared_sites.tsv`, `tree.nwk`, `tree_metadata.tsv` (and `work/`). The files above are for all queries together |
 
 `run_manifest.yaml` lists under `results` each result (all queries together, then each
-query) with its folder, number of neighbours and compared positions, or why it failed.
+query) with its folder, number of neighbours and compared positions, the compared region
+(`compared_region`, columns of `alignment_untrimmed.fasta`) and the sequences left out by
+trimming (`dropped`), or why it failed.
 
 ## 5. Settings (`config.yaml`)
 

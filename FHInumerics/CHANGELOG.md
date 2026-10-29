@@ -5,6 +5,26 @@ run's `run_manifest.yaml`. Newest first.
 
 ## Unreleased
 
+- New page **Alignment**: the aligned sequences, each compared with an anchor (the
+  majority consensus by default, or any sequence: right-click "Use as anchor"). Only
+  differences are drawn, coloured by the SNP rule: SNPs, ambiguity codes that cannot
+  match (counted) or fit (not counted), indels, no data (N and missing ends), and grey
+  where the anchor has no base. An overview chart of how many sequences differ per
+  column; mouse wheel zooms, drag moves, double-click shows the whole alignment; sort
+  rows by tree, SNPs, name or date; go to a position; previous/next difference; a box
+  with positions, metadata and per-sequence totals (SNPs, indel events, ambiguity codes,
+  % no data) when pointing at a cell; "Variable columns only", "Hide columns that are a
+  gap in the anchor", consensus settings (ties as ambiguity code or N, optional
+  threshold). Downloads: aligned FASTA (whole or on screen), PDF, PNG and an interactive
+  page (HTML) that opens without FHInumerics.
+- Run results open in the Alignment page untrimmed, with the compared region marked.
+  Choose sequences for it by clicking names in the SNP table, dragging over the tree, a
+  query and its N closest (ties included), or a click on a number in the SNP table (that
+  pair, at its first SNP). Earlier run folders and aligned FASTA files can be opened too.
+- SNP distances: all rows are shown (before, at most 100).
+- Run folders get `alignment_untrimmed.fasta`; `run_manifest.yaml` results get
+  `compared_region` and `dropped`. SNPs, trees and other results are unchanged.
+
 - **SNP counting takes ambiguity codes into account** (phangorn `dist.hamming` instead of
   ape `dist.dna`): an ambiguity code counts as a SNP only when it cannot match the other
   base (K = G/T vs A counts; M = A/C vs A does not). Before, ambiguity codes were skipped

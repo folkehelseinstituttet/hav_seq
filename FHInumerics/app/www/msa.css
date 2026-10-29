@@ -1,0 +1,39 @@
+/* Alignment viewer (msa.js): layout and look follow a plain report style - a control bar,
+   an overview, one line of legend, then the alignment. */
+#msa { position: relative; user-select: none; font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.msa-bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 8px 10px;
+           background: #f6f7f9; border: 1px solid #d8dee4; border-radius: 6px; position: sticky; top: 0; z-index: 4; }
+.msa-bar label { display: flex; gap: 6px; align-items: center; margin: 0; }
+.msa-bar select, .msa-bar button, .msa-bar input[type=number] {
+  font: inherit; padding: 2px 8px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; color: #1f2328; }
+.msa-bar button { cursor: pointer; }
+.msa-bar button:hover { background: #eef1f4; }
+.msa-bar input[type=number] { width: 90px; }
+.msa-range { color: #656d76; }
+.msa-hint { color: #656d76; font-size: 12px; margin: 4px 2px 0; }
+.msa-message { color: #8a4b00; min-height: 0; margin: 2px; }
+.msa-overview { display: block; margin-top: 6px; cursor: crosshair; }
+.msa-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: #656d76; margin: 4px 0 8px; }
+.msa-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.msa-legend .sw { display: inline-block; min-width: 14px; height: 14px; border-radius: 2px; border: 1px solid #d0d7de;
+                  font: bold 10px/12px ui-monospace, Consolas, monospace; text-align: center; font-style: normal; }
+.msa-frame { position: relative; }
+.msa-canvas { display: block; cursor: grab; }
+.msa-canvas.dragging { cursor: grabbing; }
+.msa-vscroll { position: absolute; top: 0; right: -18px; width: 18px; overflow-y: scroll; }
+.msa-tip { display: none; position: fixed; pointer-events: none; max-width: 440px; }
+.msa-tip hr { border: none; border-top: 1px solid #d8dee4; margin: 4px 0; }
+.msa-tip-muted { color: #656d76; }
+.msa-tip-warn { color: #8a4b00; }
+.msa-menu { position: absolute; display: none; z-index: 1001; background: white; border: 1px solid #bbb;
+            border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.15); padding: 4px 0; }
+.msa-menu-item { padding: 4px 14px; cursor: pointer; white-space: nowrap; }
+.msa-menu-item:hover { background: #e8f0fe; }
+/* Alignment page header (app.R) */
+.msa-head h5 { margin: 0; font-size: 17px; }
+.msa-sub { color: #656d76; font-size: 13px; }
+.msa-mode { margin: 6px 0; padding: 5px 10px; border-left: 4px solid #0969da; background: #f0f6ff; border-radius: 4px; }
+.msa-note { margin: 4px 0; padding: 4px 10px; border-left: 4px solid #d4a72c; background: #fff8c5; border-radius: 4px; }
+#snp_table td.fhi-pick { cursor: pointer; }
+#snp_table td.fhi-picked { box-shadow: inset 0 0 0 3px #1a73e8; }
+#snp_table td[data-pair-row] { cursor: pointer; }

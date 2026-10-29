@@ -66,7 +66,69 @@ check("hover box: bases follow row/column order; marked pairs only where gaps/N/
       grepl("\n11 - T/G\n", hover$text[["o\tq"]]) && hover$flagged[["q\to"]] && !hover$flagged[["q\tp"]] &&
         identical(hover$text[["q\tp"]], "q / p\n0 SNPs over 11 compared positions"))
 
+# Alignment viewer (R/msa.R): every cell class against an anchor sequence.
+msa_toy <- c(anchor = "ACGTRACGT-ACGA",
+             x      = "--CTAANKTA-CGA",   # end, end, mismatch, ., amb.fit vs R, ., N, K fits G, ., base vs anchor gap, gap, ., ., .
+             y      = "ACGTCACG-TACG-",   # C vs R cannot match; gap, base vs anchor gap (one indel event); missing end
+             z      = "ACGTAACGT-ACGA")   # gap where the anchor has a gap: same
+toy_m <- msa_matrix(msa_toy)
+toy_cls <- matrix(as.integer(msa_classes(toy_m, toy_m["anchor", ])), 4)
+check("alignment viewer: cell classes (same, SNP, ambiguity fits/clashes, indel both ways, N, missing end)",
+      identical(toy_cls[2, ], c(6L, 6L, 1L, 0L, 2L, 0L, 5L, 2L, 0L, 4L, 4L, 0L, 0L, 0L)) &&
+        identical(toy_cls[3, ], c(0L, 0L, 0L, 0L, 3L, 0L, 0L, 0L, 4L, 4L, 0L, 0L, 0L, 6L)) &&
+        identical(toy_cls[4, ], c(0L, 0L, 0L, 0L, 2L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L)) &&
+        identical(msa_anchor_classes(toy_m["anchor", ]), c(8L, 8L, 8L, 8L, 2L, 8L, 8L, 8L, 8L, 4L, 8L, 8L, 8L, 8L)))
+check("alignment viewer: mismatch + strong ambiguity cells = SNP columns, for every anchor and row", {
+  bits <- base_bits(msa_toy)
+  all(vapply(names(msa_toy), function(a) {
+    cls <- msa_classes(toy_m, toy_m[a, ])
+    all(vapply(names(msa_toy), function(b) identical(which(cls[b, ] %in% as.raw(c(1, 3))), snp_columns(bits, a, b)), TRUE))
+  }, TRUE))
+})
+frag_anchor <- msa_matrix(c(a = "--ACGT--", b = "TTACGTAA"))
+check("alignment viewer: a fragment anchor has nothing to compare outside its own length (grey)",
+      identical(as.integer(msa_classes(frag_anchor, frag_anchor["a", ])["b", ]), c(7L, 7L, 0L, 0L, 0L, 0L, 7L, 7L)))
+toy_view <- msa_view(msa_load(msa_toy, "toy"), "anchor")
+check("alignment viewer: differences to the anchor, variable columns, anchor gaps, rows sorted by differences",
+      identical(unname(toy_view$diffs), c(0, 1, 1, 0)) &&
+        identical(which(toy_view$variable), c(3L, 5L, 8L, 9L, 10L, 11L)) && identical(which(toy_view$anchor_gap), 10L) &&
+        identical(rownames(toy_m)[toy_view$rows], c("z", "x", "y")))
+check("alignment viewer: per row indel events (a run counts once) and columns, ambiguity codes, no data; per column differing rows",
+      identical(toy_view$stats$indel_events, c(0, 1, 1, 0)) && identical(toy_view$stats$indel_cols, c(0, 2, 2, 0)) &&
+        identical(toy_view$stats$ambiguity, c(1, 2, 1, 1)) && identical(toy_view$stats$nodata, c(0, 3, 1, 0)) &&
+        identical(toy_view$ndiff, c(0, 0, 1, 0, 1, 0, 0, 0, 1, 2, 1, 0, 0, 0)))
+
+# Consensus: majority with split votes; tie -> ambiguity code (or N); gap inside most
+# sequences -> "-"; no votes -> N; threshold.
+cons_aln <- c(s1 = "AAGNA-AA", s2 = "AGGNA-CA", s3 = "CGRNC-G-", s4 = "CARN-AT-")
+# col: 1 A/C tie, 2 A/G tie, 3 G 3 votes (R splits) vs A 1, 4 no votes, 5 A 2 vs C 1 (+ a gap),
+#      6 gap inside 3 of 4, 7 four-way tie, 8 A (missing ends do not vote)
+cons <- function(...) rawToChar(msa_consensus(msa_matrix(cons_aln), ...))
+check("consensus: majority, split votes for ambiguity codes, ties as ambiguity code or N, gaps, no coverage",
+      identical(cons(), "MRGNA-NA") && identical(cons(ties = "n"), "NNGNA-NA"))
+check("consensus: with a threshold the most common base must reach it, else the code of the top bases",
+      identical(cons(threshold = 75), "MRGNM-NA") && identical(cons(threshold = 50), "MRGNA-NA") &&
+        identical(cons(threshold = 80, ties = "n"), "NNNNN-NA"))
+check("consensus: the default anchor (no anchor sequence chosen)",
+      identical(msa_view(msa_load(cons_aln, "c"))$anchor_name, MSA_CONSENSUS))
+
+# Coordinates: own base numbers, "gap after", the column of a base number.
+check("alignment viewer: base numbers along a sequence and the column of a base number",
+      identical(msa_positions(charToRaw("--AC-GT")), c(0L, 0L, 1L, 2L, 2L, 3L, 4L)) &&
+        msa_column_of(charToRaw("--AC-GT"), 3) == 6L && is.na(msa_column_of(charToRaw("--AC"), 5)))
+
+# Subsets keep the original column numbers; closest N includes ties.
+sub_a <- msa_subset(msa_load(c(p = "A--CA", q = "A-GCA", r = "AT-CA"), "s", compared = 2:4), c("p", "q"))
+check("alignment viewer: a subset drops columns that are a gap in every chosen row, keeps column numbers",
+      identical(sub_a$cols, c(1L, 3L, 4L, 5L)) && identical(sub_a$compared, c(FALSE, TRUE, TRUE, FALSE)))
+snp_toy <- matrix(c(0, 1, 2, 2, 5,  1, 0, 0, 0, 0,  2, 0, 0, 0, 0,  2, 0, 0, 0, 0,  5, 0, 0, 0, 0), 5,
+                  dimnames = list(c("q", "a", "b", "c", "d"), c("q", "a", "b", "c", "d")))
+check("closest N: ties at the N-th place are all included",
+      identical(msa_closest(snp_toy, "q", 2), list(ids = c("q", "a", "b", "c"), extra = 1L)) &&
+        identical(msa_closest(snp_toy, "q", 1)$ids, c("q", "a")))
+
 res <- run("fragments.fasta")
+frag <- res
 # KY782331.1 is one of the 101 equally close sequences, not necessarily one of the
 # 20 in the tree, so it is checked in the search hits.
 hit <- res$hits[res$hits$query == "test_KY782331_3snps" & res$hits$subject == "KY782331.1", ]
@@ -111,6 +173,55 @@ check("tree plot is a plain ggplot (otherwise Shiny reports wrong hover position
 check("hover box of a database sample shows its metadata",
       tip_details(res$views[[1]], "LC128713.1")[["Sample"]] == "LC128713.1" &&
         "country" %in% names(tip_details(res$views[[1]], "LC128713.1")))
+
+# Alignment viewer on the real runs: the untrimmed alignment is kept and saved; with any
+# sequence as anchor, its differences over the compared region = the SNP table, and the
+# mismatch + strong ambiguity cells = snp_columns() over the whole alignment.
+msa_invariant <- function(v) {
+  a <- msa_from_result(v)
+  bits <- base_bits(v$aln_full)
+  all(vapply(setdiff(rownames(a$m), a$dropped), function(anchor) {
+    mv <- msa_view(a, anchor)
+    rows <- setdiff(rownames(a$m), a$dropped)
+    all(mv$diffs[rows] == v$snp[anchor, rows]) &&
+      all(vapply(rownames(a$m), function(b) identical(which(mv$classes[b, ] %in% as.raw(c(1, 3))),
+                                                      snp_columns(bits, anchor, b)), TRUE))
+  }, TRUE))
+}
+check("alignment viewer: for every anchor and row of every result, differences = SNP table and cells = snp_columns()",
+      all(vapply(Filter(function(v) is.null(v$error), c(frag$views, res$views)), msa_invariant, TRUE)))
+gv <- res$views[[1]]
+check("run folder: untrimmed alignment saved with real names, compared region in the manifest",
+      file.exists(file.path(res$out_dir, "alignment_untrimmed.fasta")) &&
+        setequal(names(read_alignment(file.path(res$out_dir, "alignment_untrimmed.fasta"))), names(gv$aln_full)) &&
+        identical(res$manifest$results[[1]]$compared_region, sprintf("%d-%d", min(gv$compared_cols), max(gv$compared_cols))))
+ga <- msa_from_result(gv, unlist(res$manifest$reverse_complemented))
+q <- "test_LC128713_1_rc_2snps"
+gq <- msa_view(ga, q)
+diff_cols <- which(gq$classes["LC128713.1", ] %in% as.raw(c(1, 3)))
+check("alignment viewer: reverse-complemented query numbered on its reverse complement, as in the SNP hover box (3001, 3101)",
+      q %in% ga$revcomp && identical(msa_positions(ga$m[q, ])[diff_cols], c(3001L, 3101L)) &&
+        msa_first_difference(ga, gq, "LC128713.1") == diff_cols[1] &&
+        msa_column_of(ga$m[q, ], 3001) == diff_cols[1])
+check("alignment viewer: rows in tree order, as the SNP table",
+      identical(rownames(ga$m)[seq_along(gv$tree$tip.label)], tree_order(gv$tree)))
+folders <- msa_run_results(res$out_dir)
+fa <- msa_load_run_folder(folders[[1]], names(folders)[1], attr(folders, "manifest"), attr(folders, "regions")[[1]])
+check("earlier run folder: opens the same alignment, compared region, queries and order",
+      identical(fa$m, ga$m) && identical(fa$compared, ga$compared) && identical(fa$queries, ga$queries) &&
+        identical(fa$revcomp, ga$revcomp))
+pdf_file <- file.path(out, "window.pdf")
+msa_pdf(ga, gq, gq$rows[1:5], diff_cols[1] + (-20:20), pdf_file)
+msa_pdf(ga, gq, gq$rows, seq_len(ncol(ga$m)), file.path(out, "whole.pdf"))
+check("alignment viewer: PDF of a window (letters) and of the whole alignment", all(file.size(c(pdf_file, file.path(out, "whole.pdf"))) > 1000))
+html_file <- file.path(out, "alignment.html")
+msa_html(ga, gq, html_file, sort = "name")
+html <- paste(readLines(html_file, warn = FALSE), collapse = "\n")
+check("alignment viewer: standalone HTML page with the viewer, the data and the current anchor",
+      grepl("fhiMsa.load(", html, fixed = TRUE) && grepl("function drawOverview", html, fixed = TRUE) &&
+        grepl(q, html, fixed = TRUE) && lengths(regmatches(html, gregexpr("</script>", html, fixed = TRUE))) == 2)
+check("alignment viewer: FASTA of the shown region",
+      identical(nchar(msa_fasta(ga, 1:2, 101, 200)), stats::setNames(c(100L, 100L), rownames(ga$m)[1:2])))
 
 # A database sample sent from the Database viewer: its own entry is left out.
 ref <- load_db_seqs(db, cfg)

@@ -16,7 +16,7 @@ roots <- roots[dir.exists(roots)]
 clean_path <- function(p) path.expand(gsub("\\\\", "/", trimws(p)))
 
 # The menu at the top of the left side: one link per page. The page shown is input$page.
-PAGES <- c("Outbreak detection" = "outbreak", "Database viewer" = "viewer")
+PAGES <- c("Outbreak detection" = "outbreak", "Database viewer" = "viewer", "Alignment" = "alignment")
 menu_js <- HTML("
 $(function() {
   function setPage(page) {
@@ -36,6 +36,17 @@ $(function() {
              top: below ? e.clientY + 14 : '', bottom: below ? '' : window.innerHeight - e.clientY + 14});
   });
   $(document).on('mouseleave', 'td[data-tip]', function() { $('#fhi-cell-tip').hide(); });
+  // SNP table: a click on a name chooses that row for the Alignment page; a click on a
+  // number in a query's row or column opens that pair there.
+  $(document).on('click', '#snp_table td.fhi-pick', function() {
+    $(this).toggleClass('fhi-picked');
+    Shiny.setInputValue('snp_rows', $('#snp_table td.fhi-picked').map(function() { return $(this).attr('data-name'); }).get(),
+                        {priority: 'event'});
+  });
+  $(document).on('click', '#snp_table td[data-pair-row]', function() {
+    Shiny.setInputValue('snp_pair', {row: $(this).attr('data-pair-row'), col: $(this).attr('data-pair-col')}, {priority: 'event'});
+  });
+  Shiny.addCustomMessageHandler('snp_clear', function(x) { $('#snp_table td.fhi-picked').removeClass('fhi-picked'); });
   Shiny.addCustomMessageHandler('clear_file_input', function(id) {
     $('#' + id).closest('.input-group').find('input[type=text]').val('');
   });
@@ -87,6 +98,36 @@ viewer_inputs <- tagList(
   actionButton("send", "Send chosen samples to Outbreak detection", class = "btn-primary", width = "100%")
 )
 
+alignment_inputs <- tagList(
+  radioButtons("aln_source", "Show", c("Results of the last run" = "run", "An earlier run folder" = "folder",
+                                        "An aligned FASTA file" = "file")),
+  conditionalPanel("input.aln_source === 'run'", uiOutput("aln_run_ui")),
+  conditionalPanel("input.aln_source === 'folder'",
+    shinyFiles::shinyDirButton("aln_browse", "Choose a run folder...", "Choose the folder of one run"),
+    uiOutput("aln_folder_ui")),
+  conditionalPanel("input.aln_source === 'file'",
+    fileInput("aln_file", NULL, accept = c(".fa", ".fasta", ".fas", ".fna", ".aln", ".txt"),
+              buttonLabel = "Aligned FASTA...", placeholder = "No file chosen")),
+  uiOutput("aln_rows_ui"),
+  selectInput("aln_anchor", "Compare with", c("Majority consensus" = "")),
+  checkboxInput("aln_variable", "Variable columns only"),
+  checkboxInput("aln_hide_gaps", "Hide columns that are a gap in the anchor"),
+  accordion(open = FALSE, accordion_panel(
+    "Consensus settings",
+    radioButtons("aln_ties", "When the most common base is not clear (a tie)",
+                 c("Ambiguity code (A/G tie = R)" = "iupac", "N" = "n")),
+    checkboxInput("aln_use_threshold", "The most common base must reach a threshold"),
+    conditionalPanel("input.aln_use_threshold", sliderInput("aln_threshold", NULL, 50, 100, 75, step = 5, post = "%"))
+  )),
+  h6("Download", class = "mt-3"),
+  div(class = "d-flex gap-2 flex-wrap",
+      downloadButton("aln_dl_fasta", "FASTA (whole)", class = "btn-sm"),
+      downloadButton("aln_dl_region", "FASTA (columns on screen)", class = "btn-sm"),
+      downloadButton("aln_dl_pdf", "PDF (on screen)", class = "btn-sm"),
+      actionButton("aln_png", "Picture (PNG)", icon = icon("download"), class = "btn-sm"),
+      downloadButton("aln_dl_html", "Interactive page (HTML)", class = "btn-sm"))
+)
+
 # A chart tab: controls on top, then a note and the chart. With `hover`, pointing at the
 # chart shows a box (output <id>_hover_box) next to the pointer.
 chart_panel <- function(title, id, ..., hover = FALSE) {
@@ -121,7 +162,8 @@ hover_box <- function(hover, hit, details) {
 ui <- page_sidebar(
   title = "FHInumerics - HAV sequence comparison",
   fillable = FALSE,   # tables and plots take their own height; the page scrolls
-  tags$head(tags$script(menu_js), tags$style(HTML("
+  tags$head(tags$script(menu_js), tags$script(src = "msa.js"), tags$link(rel = "stylesheet", href = "msa.css"),
+            tags$style(HTML("
     .fhi-tip { position: absolute; z-index: 1000; pointer-events: none; background: white;
                border: 1px solid #bbb; border-radius: 4px; box-shadow: 0 2px 6px rgba(0,0,0,.2);
                padding: 6px 8px; font-size: 12px; max-width: 380px; }
@@ -139,8 +181,9 @@ ui <- page_sidebar(
     width = 380,
     menu,
     hr(class = "my-1"),
-    conditionalPanel("input.page !== 'viewer'", outbreak_inputs),
-    conditionalPanel("input.page === 'viewer'", viewer_inputs)
+    conditionalPanel("input.page !== 'viewer' && input.page !== 'alignment'", outbreak_inputs),
+    conditionalPanel("input.page === 'viewer'", viewer_inputs),
+    conditionalPanel("input.page === 'alignment'", alignment_inputs)
   ),
   navset_hidden(
     id = "main",
@@ -155,7 +198,7 @@ ui <- page_sidebar(
         ),
         uiOutput("tree_ui")
       ),
-      nav_panel("SNP distances", uiOutput("snp_note"), DT::DTOutput("snp_table", fill = FALSE)),
+      nav_panel("SNP distances", uiOutput("snp_note"), uiOutput("snp_pick_ui"), DT::DTOutput("snp_table", fill = FALSE)),
       nav_panel("Closest matches", uiOutput("ties_note"), DT::DTOutput("hits_table", fill = FALSE)),
       nav_panel("Run log", verbatimTextOutput("log"))
     )),
@@ -176,6 +219,11 @@ ui <- page_sidebar(
       chart_panel("Map", "map",
         selectInput("map_split", "In the box, count per", "none"),
         checkboxInput("map_zoom", "Zoom to the samples", TRUE), hover = TRUE)
+    )),
+    # Not a card: the viewer's control bar stays at the top while the page scrolls.
+    nav_panel_hidden("alignment", div(class = "px-1",
+      uiOutput("aln_status"),
+      div(id = "msa")
     ))
   )
 )
@@ -281,10 +329,13 @@ server <- function(input, output, session) {
     if (!is.null(view()$error)) return(view_error())
     if (is.null(view()$tree)) return(p("Too few sequences for a tree."))
     tagList(
-      p(class = "small text-muted", "Point at the dot of a sample in the tree to see its details."),
+      p(class = "small text-muted", "Point at the dot of a sample in the tree to see its details.",
+        "Drag up or down over the tree to choose samples for the Alignment page."),
+      uiOutput("tree_pick_ui"),
       div(style = "position: relative;",
           plotOutput("tree", height = tree_height(),
-                     hover = hoverOpts("tree_hover", delay = 80, delayType = "throttle")),
+                     hover = hoverOpts("tree_hover", delay = 80, delayType = "throttle"),
+                     brush = brushOpts("tree_brush", direction = "y", resetOnNew = TRUE, fill = "#1a73e8")),
           uiOutput("tree_tip"))
     )
   })
@@ -330,11 +381,12 @@ server <- function(input, output, session) {
     # cells where the pair also differs by gaps, Ns or ambiguity codes get a corner mark.
     tips <- snp_tips(v, unlist(result()$manifest$reverse_complemented))
     cell_js <- DT::JS(sprintf(
-      "(function() { var tips = %s, flags = %s, cols = %s; return function(td, cellData, rowData, row, col) { var key = rowData[0] + '\\t' + cols[col]; if (tips[key]) td.setAttribute('data-tip', tips[key]); if (flags[key]) td.classList.add('fhi-flag'); }; })()",
+      "(function() { var tips = %s, flags = %s, cols = %s; return function(td, cellData, rowData, row, col) { var key = rowData[0] + '\\t' + cols[col]; if (col === 0) { td.classList.add('fhi-pick'); td.setAttribute('data-name', rowData[0]); } if (tips[key]) { td.setAttribute('data-tip', tips[key]); td.setAttribute('data-pair-row', rowData[0]); td.setAttribute('data-pair-col', cols[col]); } if (flags[key]) td.classList.add('fhi-flag'); }; })()",
       jsonlite::toJSON(as.list(tips$text), auto_unbox = TRUE),
       jsonlite::toJSON(as.list(tips$flagged[tips$flagged]), auto_unbox = TRUE), jsonlite::toJSON(colnames(df))))
-    table <- DT::datatable(df, fillContainer = FALSE, rownames = FALSE,
-                           options = list(scrollX = TRUE, pageLength = 100, dom = "t", headerCallback = header_js,
+    # All rows on one page (no paging), so every sequence can be reached and chosen.
+    table <- DT::datatable(df, fillContainer = FALSE, rownames = FALSE, selection = "none",
+                           options = list(scrollX = TRUE, paging = FALSE, dom = "t", headerCallback = header_js,
                                           columnDefs = list(list(targets = "_all", createdCell = cell_js))))
     table <- DT::formatStyle(table, colnames(snp),
       backgroundColor = DT::styleInterval(brks - 0.5, c("white", "#08519c", "#3182bd", "#6baed6", "#9ecae1", "#c6dbef", "white")),
@@ -599,6 +651,261 @@ server <- function(input, output, session) {
     hit$r <- map_radius()[hit$i]
     hover_box(input$map_hover, hit, circle_details(circles[hit$i, ], input$map_split %||% "none"))
   })
+
+  # ==== Alignment ======================================================================
+  # The page shows one alignment (aln_base): a result of the last run, a result in an
+  # earlier run folder, or an aligned FASTA file. aln_pick holds what was chosen for it
+  # elsewhere (rows, anchor), valid only while the same alignment is shown (same key).
+  aln_pick <- reactiveVal(list(key = ""))
+  pending_pair <- NULL   # a pair from the SNP table: go to its first difference once
+  aln_try <- function(expr) tryCatch(expr, error = function(e) {
+    showNotification(conditionMessage(e), type = "error", duration = NULL)
+    NULL
+  })
+
+  output$aln_run_ui <- renderUI({
+    views <- result()$views
+    if (is.null(views)) return(p(class = "small text-muted", "No comparison has been run yet. Run one on the",
+                                 em("Outbreak detection"), "page, or choose another source."))
+    ok <- names(views)[vapply(views, function(v) is.null(v$error), TRUE)]
+    selectInput("aln_view", "Result", ok, intersect(isolate(view()$label), ok)[1])
+  })
+  # The Alignment page follows "Show results for", and the other way round.
+  observeEvent(input$view, updateSelectInput(session, "aln_view", selected = input$view))
+  observeEvent(input$aln_view, {
+    if (!is.null(input$view) && !identical(input$view, input$aln_view)) updateSelectInput(session, "view", selected = input$aln_view)
+  })
+
+  aln_roots <- function() {
+    out <- c(Results = path.expand(cfg$output_dir), roots)
+    out[dir.exists(out) & !duplicated(out)]
+  }
+  shinyFiles::shinyDirChoose(input, "aln_browse", roots = aln_roots, session = session)
+  aln_folder <- reactiveVal(NULL)
+  observeEvent(input$aln_browse, {
+    path <- shinyFiles::parseDirPath(aln_roots(), input$aln_browse)
+    if (!length(path)) return()
+    folders <- aln_try(msa_run_results(path))
+    if (!is.null(folders)) { attr(folders, "dir") <- path; aln_folder(folders) }
+  })
+  output$aln_folder_ui <- renderUI({
+    f <- req(aln_folder())
+    tagList(p(class = "small mt-2 mb-1", basename(attr(f, "dir"))),
+            selectInput("aln_folder_result", "Result", names(f)))
+  })
+
+  aln_base <- reactive({
+    src <- input$aln_source %||% "run"
+    if (src == "run") {
+      res <- req(result())
+      v <- res$views[[req(input$aln_view)]]
+      req(v, is.null(v$error))
+      list(key = paste("run", res$out_dir, v$label), a = msa_from_result(v, unlist(res$manifest$reverse_complemented)))
+    } else if (src == "folder") {
+      f <- req(aln_folder())
+      i <- req(match(input$aln_folder_result, names(f)))
+      a <- aln_try(msa_load_run_folder(f[[i]], paste0(basename(attr(f, "dir")), ": ", names(f)[i]),
+                                       attr(f, "manifest"), attr(f, "regions")[[i]], attr(f, "dropped")[[i]]))
+      list(key = paste("folder", f[[i]]), a = req(a))
+    } else {
+      file <- req(input$aln_file)
+      a <- aln_try(msa_load(msa_read_fasta(file$datapath), file$name))
+      list(key = paste("file", file$name, file$size), a = req(a))
+    }
+  })
+  # The alignment as shown: all rows, or the rows chosen for it.
+  aln_shown <- reactive({
+    b <- aln_base()
+    pick <- aln_pick()
+    if (!identical(pick$key, b$key) || is.null(pick$rows)) return(list(key = b$key, a = b$a, pick = NULL))
+    list(key = b$key, a = msa_subset(b$a, pick$rows), pick = pick)
+  })
+
+  # Anchor: none (the majority consensus) unless chosen; right-click a row, the "Compare
+  # with" list, or a pair from the SNP table.
+  aln_anchor <- reactiveVal(NULL)
+  observeEvent(aln_shown(), priority = 10, {
+    s <- aln_shown()
+    anchor <- s$pick$anchor
+    aln_anchor(anchor)
+    updateSelectInput(session, "aln_anchor", choices = c("Majority consensus" = "", rownames(s$a$m)),
+                      selected = anchor %||% "")
+  })
+  observeEvent(input$aln_anchor, aln_anchor(if (nzchar(input$aln_anchor)) input$aln_anchor), ignoreInit = TRUE)
+  observeEvent(input$msa_anchor_pick, {
+    name <- input$msa_anchor_pick$name
+    aln_anchor(if (nzchar(name)) name)
+    updateSelectInput(session, "aln_anchor", selected = name)
+  })
+
+  aln_view_data <- reactive({
+    a <- aln_shown()$a
+    threshold <- if (isTRUE(input$aln_use_threshold)) input$aln_threshold
+    msa_view(a, aln_anchor(), input$aln_ties %||% "iupac", threshold)
+  })
+  observeEvent(aln_shown(), priority = 5, session$sendCustomMessage("msa_data", msa_payload(aln_shown()$a)))
+  observeEvent(aln_view_data(), {
+    a <- aln_shown()$a
+    v <- aln_view_data()
+    msg <- msa_view_payload(a, v)
+    if (!is.null(pending_pair) && identical(v$anchor, pending_pair$query)) {
+      msg$goto <- msa_first_difference(a, v, pending_pair$other)
+      msg$select <- pending_pair$other
+      pending_pair <<- NULL
+    }
+    session$sendCustomMessage("msa_view", msg)
+  })
+  observe(session$sendCustomMessage("msa_options", list(variable = isTRUE(input$aln_variable),
+                                                        hide_gaps = isTRUE(input$aln_hide_gaps))))
+
+  output$aln_status <- renderUI({
+    if (is.null(tryCatch(aln_base(), error = function(e) NULL))) {
+      return(p("Run a comparison on the", em("Outbreak detection"), "page, or choose an earlier run folder",
+               "or an aligned FASTA file on the left."))
+    }
+    s <- aln_shown()
+    a <- s$a
+    v <- aln_view_data()
+    n_all <- nrow(aln_base()$a$m)
+    region <- if (!is.null(a$compared)) {
+      cols <- a$cols[a$compared]
+      sprintf(" \u00b7 columns %d\u2013%d compared in the run (the SNP table); the rest is greyed", min(cols), max(cols))
+    }
+    mode <- if (is.null(v$anchor)) {
+      div(class = "msa-mode", "Compared with: ", strong("the majority consensus"), " (no anchor sequence chosen).",
+          " To compare with one sequence, right-click its name and choose ", em("Use ... as anchor"),
+          ", or pick it under ", em("Compare with"), " on the left.")
+    } else {
+      div(class = "msa-mode", "Compared with: ", strong(v$anchor), " (the anchor, top row).",
+          " Right-click and choose ", em("Compare with the majority consensus"), " to go back.")
+    }
+    note <- function(...) div(class = "msa-note", ...)
+    tagList(
+      div(class = "msa-head", h5(a$label), div(class = "msa-sub", sprintf(
+        "%s of %d sequences \u00b7 %d columns%s \u00b7 the number after each name: SNPs to the anchor, as in the SNP table",
+        nrow(a$m), n_all, ncol(a$m), region %||% ""))),
+      mode,
+      if (!is.null(s$pick$note)) note(s$pick$note),
+      if (length(a$dropped)) note(sprintf(
+        "%d sequences (grey names) cover less than half of the compared region and were left out of the SNP table and tree.",
+        length(a$dropped))),
+      if (!is.null(a$note)) note(a$note)
+    )
+  })
+
+  # Query and its closest sequences (run results).
+  output$aln_rows_ui <- renderUI({
+    b <- tryCatch(aln_base(), error = function(e) NULL)
+    if (is.null(b)) return(NULL)
+    tagList(
+      if (!is.null(b$a$snp) && length(b$a$queries)) tagList(
+        h6("Show a query and its closest"),
+        selectInput("aln_query", "Query", b$a$queries),
+        numericInput("aln_n", "Number of closest sequences", 10, min = 1, max = 500),
+        actionButton("aln_closest", "Show the query and its closest", class = "btn-sm mb-2")),
+      actionButton("aln_all", "Show all sequences", class = "btn-sm mb-3")
+    )
+  })
+  observeEvent(input$aln_closest, {
+    b <- aln_base()
+    n <- max(1, as.integer(input$aln_n %||% 10))
+    cl <- msa_closest(b$a$snp, input$aln_query, n)
+    note <- sprintf("Showing %s and its %d closest sequences (by SNPs in the SNP table).", input$aln_query, n)
+    if (cl$extra) note <- paste(note, sprintf("%d more are as close as number %d and are shown too.", cl$extra, n))
+    aln_pick(list(key = b$key, rows = cl$ids, note = note))
+  })
+  observeEvent(input$aln_all, aln_pick(list(key = "")))
+
+  # Picks from the run results: rows of the SNP table, a box over the tree, a pair.
+  show_in_alignment <- function(ids, anchor = NULL, note = NULL) {
+    res <- result()
+    v <- view()
+    aln_pick(list(key = paste("run", res$out_dir, v$label), rows = ids, anchor = anchor, note = note))
+    updateRadioButtons(session, "aln_source", selected = "run")
+    updateSelectInput(session, "aln_view", selected = v$label)
+    session$sendCustomMessage("set_page", "alignment")
+  }
+  snp_picked <- reactiveVal(character(0))
+  observeEvent(input$snp_rows, snp_picked(unlist(input$snp_rows)), ignoreNULL = FALSE)
+  observeEvent(view(), snp_picked(character(0)))
+  output$snp_pick_ui <- renderUI({
+    ids <- snp_picked()
+    if (!length(ids)) {
+      return(p(class = "small text-muted", "Click names to choose sequences for the Alignment page.",
+               "Click a number in a query's row or column to see that pair in the Alignment page."))
+    }
+    div(class = "d-flex align-items-center gap-2 mb-2", strong(length(ids), "chosen"),
+        actionButton("snp_show", "Show in Alignment", class = "btn-sm btn-primary"),
+        actionButton("snp_unpick", "Clear", class = "btn-sm"))
+  })
+  observeEvent(input$snp_show, show_in_alignment(snp_picked(), note = sprintf(
+    "Showing the %d sequences chosen in the SNP table.", length(snp_picked()))))
+  observeEvent(input$snp_unpick, { snp_picked(character(0)); session$sendCustomMessage("snp_clear", TRUE) })
+  observeEvent(input$snp_pair, {
+    r <- input$snp_pair$row
+    k <- input$snp_pair$col
+    q <- if (r %in% view()$queries) r else k
+    other <- setdiff(c(r, k), q)
+    pending_pair <<- list(query = q, other = other)
+    show_in_alignment(c(q, other), anchor = q, note = sprintf(
+      "Showing %s and %s, compared with %s, at their first SNP (if any).", q, other, q))
+  })
+
+  tree_brushed <- reactive({
+    b <- input$tree_brush
+    if (is.null(b)) return(character(0))
+    d <- tree_plot()$data
+    tips <- d[d$isTip, ]
+    tips$label[tips$y >= b$ymin & tips$y <= b$ymax]
+  })
+  output$tree_pick_ui <- renderUI({
+    ids <- tree_brushed()
+    if (!length(ids)) return(NULL)
+    div(class = "d-flex align-items-center gap-2 mb-2", strong(length(ids), "chosen in the tree"),
+        actionButton("tree_show", "Show in Alignment", class = "btn-sm btn-primary"))
+  })
+  observeEvent(input$tree_show, show_in_alignment(tree_brushed(), note = sprintf(
+    "Showing the %d sequences chosen in the tree.", length(tree_brushed()))))
+
+  # Downloads: rows in the order shown (anchor first).
+  # The order the viewer shows (its "Sort rows"), else R's order.
+  aln_order <- function() {
+    a <- aln_shown()$a
+    v <- aln_view_data()
+    shown <- unlist(input$msa_window$order)
+    rows <- if (setequal(shown, v$rows)) shown else v$rows
+    c(if (!is.null(v$anchor)) match(v$anchor, rownames(a$m)), rows)
+  }
+  aln_file_name <- function(ext, cols = NULL) {
+    a <- aln_shown()$a
+    paste0("alignment_", gsub("[^A-Za-z0-9._-]+", "_", sub("\\.[A-Za-z]+$", "", a$label)),
+           if (!is.null(cols)) sprintf("_columns_%d-%d", a$cols[min(cols)], a$cols[max(cols)]), ext)
+  }
+  window_cols <- function() {
+    cols <- unlist(input$msa_window$cols)
+    validate(need(length(cols), "Open the Alignment page first."))
+    cols
+  }
+  output$aln_dl_fasta <- downloadHandler(
+    filename = function() aln_file_name(".fasta"),
+    content = function(file) write_fasta(msa_fasta(aln_shown()$a, aln_order()), file)
+  )
+  output$aln_dl_region <- downloadHandler(
+    filename = function() aln_file_name(".fasta", window_cols()),
+    content = function(file) {
+      cols <- window_cols()
+      write_fasta(msa_fasta(aln_shown()$a, aln_order(), min(cols), max(cols)), file)
+    }
+  )
+  output$aln_dl_pdf <- downloadHandler(
+    filename = function() aln_file_name(".pdf", window_cols()),
+    content = function(file) msa_pdf(aln_shown()$a, aln_view_data(), unlist(input$msa_window$rows), window_cols(), file)
+  )
+  observeEvent(input$aln_png, session$sendCustomMessage("msa_png", aln_file_name(".png")))
+  output$aln_dl_html <- downloadHandler(
+    filename = function() aln_file_name(".html"),
+    content = function(file) msa_html(aln_shown()$a, aln_view_data(), file, sort = input$msa_window$sort)
+  )
 
   # When started from the launcher, stop the app once the browser tab is closed.
   session$onSessionEnded(function() {
