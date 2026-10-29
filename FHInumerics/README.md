@@ -53,6 +53,7 @@ DECIPHER and ggtree into your personal R library (no admin rights needed). Each 
     display_columns: [date, country, genotype]
     date_column: date                        # optional: date column in the Database viewer
     country_column: country                  # optional: country column for the map
+    short_name: inhouse                      # optional: added to sample names in sets when two databases share a name
 ```
 
 Use forward slashes in Windows paths. The search index is built automatically in `cache/`
@@ -66,7 +67,8 @@ in `config.example.yaml` and in [MANUAL.md](MANUAL.md).
 
 Options: `--db NAME`, `--neighbours 20`, `--min-coverage 90`, `--no-bootstrap`,
 `--aligner decipher|mafft`, `--threads 4`, `--exclude-self` (leave out database entries
-with the same name as a query), `--config config.yaml`. Start the window once
+with the same name as a query), `--config config.yaml`. Instead of `--query`,
+`--query-set <set folder>` uses a saved set (see MANUAL.md 2.5), as the window does. Start the window once
 first (or run `Rscript launcher/setup.R`) so the packages are installed.
 
 ## For developers
@@ -81,12 +83,14 @@ first (or run `Rscript launcher/setup.R`) so the packages are installed.
 | `FHInumerics.bat`, `FHInumerics.sh` | start files (Windows, Linux/Mac) |
 | `launcher/` | `launch.R` (start, first-start install, error messages), `setup.R` (install), `find-r.bat` (finds R on Windows) |
 | `app/app.R` | the window (Shiny) |
+| `R/sets.R`, `app/align_worker.R` | Sets page: sets, saving and opening them, aligning in the background |
 | `R/compare.R` | the analysis, shared by window, command line and tests |
 | `R/search.R`, `R/db.R`, `R/fasta.R`, `R/plot.R` | database search, config and database loading, FASTA reading, tree plot |
 | `R/python.R`, `python/` | optional MAFFT alignment (Python 3.9-3.13 + pymafft) |
 | `R/requirements.R` | which packages are needed; whether setup has to run |
 | `cli/fhinumerics` | command-line version |
 | `data/demo/` | demo database (public sequences, see `data/demo/SOURCE.md`) |
+| `data/orientation_panel.fasta` | six public HAV genomes used to find reverse complements before a set is aligned |
 | `tests/` | test queries with known answers and `run_tests.R` |
 | `scripts/prepare_demo_db.py` | how the demo database was made (not needed to run) |
 | `config.yaml`, `cache/`, `tools/` | local only, created on this computer (not in git) |

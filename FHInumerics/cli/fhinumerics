@@ -5,6 +5,8 @@
 #                   [--neighbours 20] [--min-coverage 90] [--no-bootstrap]
 #                   [--aligner mafft|decipher] [--search decipher|blast]
 #                   [--threads 4] [--exclude-self] [--config config.yaml]
+#   Rscript cli/fhinumerics --query-set SET_FOLDER [...]   (a saved set; its samples from
+#                   the database searched leave out their own entry, as in the window)
 
 args <- commandArgs(trailingOnly = TRUE)
 file_arg <- sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))
@@ -13,7 +15,7 @@ options(fhinumerics.root = root)
 for (f in list.files(file.path(root, "R"), full.names = TRUE)) source(f)
 
 usage <- function() {
-  cat(readLines(file_arg)[2:8], sep = "\n")
+  cat(readLines(file_arg)[2:10], sep = "\n")
   quit(status = 1)
 }
 opt <- list(config = file.path(root, "config.yaml"))
@@ -26,7 +28,7 @@ while (i <= length(args)) {
   opt[[sub("^--", "", key)]] <- args[i + 1]
   i <- i + 2
 }
-if (is.null(opt$query)) usage()
+if (is.null(opt[["query"]]) == is.null(opt[["query-set"]])) usage()   # one of the two
 
 cfg <- load_config(opt$config)
 db <- if (is.null(opt$db)) cfg$databases[[1]] else cfg$databases[[opt$db]]
@@ -40,6 +42,15 @@ for (key in c("aligner", "search")) if (!is.null(opt[[key]])) settings[[key]] <-
 if (!is.null(opt$bootstrap)) settings$bootstrap <- opt$bootstrap
 if (!is.null(opt$exclude_self)) settings$exclude_self <- TRUE
 
-res <- run_compare(read_fasta(opt$query), db, cfg, settings, out_dir = opt$out,
-                   progress = function(step, detail = NULL) message("== ", step))
+input <- NULL
+if (!is.null(opt[["query-set"]])) {
+  q <- set_queries(set_load(opt[["query-set"]]), db$name)
+  queries <- q$seqs
+  settings$exclude_self <- q$exclude_self
+  input <- q$input
+} else {
+  queries <- read_fasta(opt[["query"]])
+}
+res <- run_compare(queries, db, cfg, settings, out_dir = opt$out,
+                   progress = function(step, detail = NULL) message("== ", step), input = input)
 cat(res$out_dir, "\n")

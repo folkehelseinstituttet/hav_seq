@@ -15,7 +15,8 @@ DEFAULT_SETTINGS <- list(
   aligner = "decipher",   # decipher (R) | mafft (pymafft, Python)
   bootstrap = TRUE,       # 100 bootstraps for the tree
   threads = 4,            # search and alignment
-  exclude_self = FALSE    # drop hits to the database entry with the query's own name
+  exclude_self = FALSE    # drop hits to the database entry with the query's own name; or a
+                          # named list: query name -> the database ID to leave out (sets)
 )
 
 # Name of the result for all queries together (a FASTA name cannot contain spaces).
@@ -23,8 +24,9 @@ ALL_QUERIES <- "All queries together"
 
 ALIGNERS <- c("MAFFT (--auto, pymafft)" = "mafft", "DECIPHER AlignSeqs (R only)" = "decipher")
 
+# `input`: where the queries came from (a set, R/sets.R set_queries()), for the manifest.
 run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
-                        progress = function(step, detail = NULL) NULL, log = message) {
+                        progress = function(step, detail = NULL) NULL, log = message, input = NULL) {
   settings <- utils::modifyList(DEFAULT_SETTINGS, settings)
   if (length(queries) > 50) stop("At most 50 query sequences per run.", call. = FALSE)
   if (!settings$aligner %in% ALIGNERS) stop("Unknown aligner '", settings$aligner, "'.", call. = FALSE)
@@ -63,12 +65,16 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
   utils::write.table(hits, file.path(work, "search_raw.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
   hits$query <- q_ids$id[match(hits$qseqid, q_ids$internal)]
   hits$subject <- ref$ids$id[match(hits$sseqid, ref$ids$internal)]
-  # Queries taken from the database itself (Database viewer) would find their own entry.
-  if (isTRUE(settings$exclude_self)) {
-    self <- q_ids$given[match(hits$qseqid, q_ids$internal)] == hits$subject
-    if (any(self)) log("Left out each query's own database entry: ", paste(unique(hits$subject[self]), collapse = ", "))
-    hits <- hits[!self, ]
-  }
+  # Queries taken from the database itself (Database viewer, sets) would find their own
+  # entry: with exclude_self TRUE each query's own name, or for the queries named in the
+  # list, the database ID given there.
+  own <- if (isTRUE(settings$exclude_self)) q_ids$given else if (is.list(settings$exclude_self)) {
+    unname(unlist(settings$exclude_self)[q_ids$given])
+  } else rep(NA_character_, nrow(q_ids))
+  self <- own[match(hits$qseqid, q_ids$internal)] == hits$subject
+  self[is.na(self)] <- FALSE
+  if (any(self)) log("Left out each query's own database entry: ", paste(unique(hits$subject[self]), collapse = ", "))
+  hits <- hits[!self, ]
 
   # ---- 2. Closest neighbours ----------------------------------------------------
   # Ties are broken by database order, so the same input always gives the same neighbours.
@@ -153,6 +159,7 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
     database = list(name = db$name, fasta = db$fasta, metadata = db$metadata,
                     fasta_md5 = ref$checksum, n_sequences = length(ref$seqs)),
     queries = as.list(names(queries)),
+    input = input,
     renamed = as.list(stats::setNames(q_ids$id[clash], q_ids$given[clash])),
     reverse_complemented = as.list(q_ids$id[match(flipped, q_ids$internal)]),
     settings = settings,
@@ -166,6 +173,7 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
     tools = tool_versions(cfg, settings),
     method = method_text(settings)
   )
+  manifest <- Filter(Negate(is.null), manifest)   # no `input` unless the queries came from a set
   yaml::write_yaml(manifest, file.path(out_dir, "run_manifest.yaml"))
   log("Finished in ", round(as.numeric(difftime(Sys.time(), started, units = "secs"))), " s")
 
@@ -317,6 +325,7 @@ method_text <- function(settings) {
     "per query, hits covering >= min_coverage % of the query, ranked by percent identity then score",
     "(ties by database order), top n_neighbours kept.",
     if (isTRUE(settings$exclude_self)) "Hits to the database entry with the query's own name were left out.",
+    if (is.list(settings$exclude_self)) "For the queries listed under exclude_self, hits to the database entry given there (their own) were left out.",
     switch(settings$aligner,
       mafft = "Alignment: MAFFT --auto (pymafft).",
       decipher = "Alignment: DECIPHER AlignSeqs."),

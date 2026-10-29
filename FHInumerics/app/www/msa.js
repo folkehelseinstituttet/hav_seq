@@ -93,6 +93,7 @@
   // ---- Data -------------------------------------------------------------------------
   function setData(d) {
     init();
+    el.root.style.display = d ? '' : 'none';   // nothing to show (e.g. a set not aligned yet)
     S.data = d;
     S.view = null;
     S.selected = -1;

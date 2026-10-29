@@ -5,6 +5,39 @@ run's `run_manifest.yaml`. Newest first.
 
 ## Unreleased
 
+- New page **Sets**: collect sequences from databases (one or more), runs, the Alignment
+  page and FASTA files into a set, with *Add to set* buttons on the Database viewer
+  (chosen samples), Outbreak detection (SNP table, tree, the whole result) and Alignment
+  page (the rows shown). The same database sample is kept once; name clashes are renamed
+  (`<name>_query`, `<name>_<database>`, `<name>_2`) and the message says so. A table of
+  the set's sequences with their source and metadata; remove rows; download the
+  sequences (FASTA) or the table (CSV). Sets are kept in the window until *Save*, which
+  writes a folder (`sequences.fasta`, `metadata.tsv`, `set.yaml` with sources, database
+  checksums and the set's checksum, `aligned.fasta`), by default in
+  `<results folder>/sets/`; saved sets are listed again at the next start. Saving over
+  another saved set asks first; *Delete* removes only the set's own files. The browser
+  asks before the tab is closed while a set is not saved.
+- **Aligning a set** (and an unaligned FASTA file in the Alignment page): sequences that
+  are reverse complements are turned first (DECIPHER `OrientNucleotides` against six HAV
+  genomes, one per subgenotype, in `data/orientation_panel.fasta`) and named in a
+  message; then DECIPHER `AlignSeqs`, as in runs. It runs in the background with a
+  progress box and *Cancel*, and the window stays usable; above 500 sequences it asks
+  first. The alignment is saved with the set. Removing sequences keeps it; sequences added
+  later are shown as "out of date" until the set is aligned again. A set made from run
+  results or an aligned file starts with that alignment.
+- Alignment page: new sources *A set* and *A FASTA file (aligned or not)*; *Add the shown
+  rows to the set*.
+- **CSV downloads** (Database viewer, sets) are now for Excel with Norwegian settings:
+  `;` between columns, decimal comma, UTF-8 with a byte order mark. Scripts reading the
+  old comma-separated files must change (e.g. R `read.csv2`).
+- New optional database setting `short_name` (used in set member names).
+- **Sets as Outbreak detection input:** "...or use a set" under the FASTA file button, or
+  *Use in Outbreak detection* on the Sets page (the rows chosen there, or the whole set;
+  at most 50). Samples in the set from the searched database leave out their own entry
+  from their closest matches; other sequences do not. `run_manifest.yaml` records the set
+  (`input`) and, as `exclude_self`, which entry each sample left out. Command line:
+  `--query-set <set folder>`. Results of pasted text and files are unchanged.
+
 - New page **Alignment**: the aligned sequences, each compared with an anchor (the
   majority consensus by default, or any sequence: right-click "Use as anchor"). Only
   differences are drawn, coloured by the SNP rule: SNPs, ambiguity codes that cannot

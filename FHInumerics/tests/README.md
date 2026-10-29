@@ -47,3 +47,18 @@ numbers, subsets and "closest N" ties, and on the real runs, with every sequence
 anchor, that the differences equal the SNP matrix and that SNP and strong-ambiguity cells
 are exactly `snp_columns()`. The reverse-complemented genome's SNPs are at its positions
 3001 and 3101, as in the SNP hover box.
+
+Sets (R/sets.R, decision 0012), 2026-10-29: `run_tests.R` checks the name-clash rules (a
+second, 3-sample database is made from the demo data), duplicate members, the set
+checksum against an MD5 made outside R, a set made from the reverse-complemented genome
+run (the query stored as given, numbered on its reverse complement at 3001/3101),
+OrientNucleotides turning exactly the reversed genome, that the background alignment
+gives the same alignment as in-process, that Cancel stops it, the progress text, the
+save/open round trip with `set.yaml`, Delete, FASTA files (aligned or not), and the
+semicolon CSV (byte order mark, `;`, decimal comma).
+
+Sets as Outbreak detection input, 2026-10-29: a set of one database sample and one pasted
+query named like another sample is run; the database sample leaves out its own entry,
+the pasted query still finds its namesake at 100%, the manifest records the set and
+exclude_self, a sample from another database excludes nothing, more than 50 gives a plain
+message, and `cli/fhinumerics --query-set` gives the same exclusion and SNP matrix.

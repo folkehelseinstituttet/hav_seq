@@ -16,7 +16,7 @@ roots <- roots[dir.exists(roots)]
 clean_path <- function(p) path.expand(gsub("\\\\", "/", trimws(p)))
 
 # The menu at the top of the left side: one link per page. The page shown is input$page.
-PAGES <- c("Outbreak detection" = "outbreak", "Database viewer" = "viewer", "Alignment" = "alignment")
+PAGES <- c("Outbreak detection" = "outbreak", "Database viewer" = "viewer", "Alignment" = "alignment", "Sets" = "sets")
 menu_js <- HTML("
 $(function() {
   function setPage(page) {
@@ -50,6 +50,19 @@ $(function() {
   Shiny.addCustomMessageHandler('clear_file_input', function(id) {
     $('#' + id).closest('.input-group').find('input[type=text]').val('');
   });
+  // Sets not saved: the browser asks before the tab is closed (closing it stops FHInumerics).
+  window.fhiUnsaved = false;
+  Shiny.addCustomMessageHandler('sets_unsaved', function(x) { window.fhiUnsaved = !!x; });
+  window.addEventListener('beforeunload', function(e) { if (window.fhiUnsaved) { e.preventDefault(); e.returnValue = ''; } });
+  // The background alignment: the box under the menu, on every page.
+  Shiny.addCustomMessageHandler('align_job', function(j) {
+    var box = $('#fhi-job');
+    if (!j || !j.label) { box.hide(); return; }
+    box.find('.fhi-job-label').text(j.label);
+    box.find('.progress-bar').css('width', Math.round(100 * j.value) + '%');
+    box.find('.fhi-job-text').text(j.text);
+    box.show();
+  });
 });")
 menu <- tags$ul(class = "nav nav-pills flex-column fhi-menu mb-2",
   lapply(names(PAGES), function(label) tags$li(class = "nav-item",
@@ -61,6 +74,7 @@ outbreak_inputs <- tagList(
                 placeholder = ">sample1\nTTCAAGAGGGGTCTCCGG...\n>sample2\n..."),
   uiOutput("sent_note"),
   fileInput("fasta_file", "...or choose a FASTA file", accept = c(".fa", ".fasta", ".fas", ".fna", ".txt")),
+  uiOutput("run_set_ui"),
   selectInput("db", "Database", choices = names(cfg$databases)),
   sliderInput("n_neighbours", "Closest sequences per query", 5, 50, defaults$n_neighbours, step = 5),
   accordion(open = FALSE, accordion_panel(
@@ -95,19 +109,23 @@ viewer_inputs <- tagList(
   div(class = "d-flex gap-2 flex-wrap mb-2",
       downloadButton("dl_csv", "Table (CSV)", class = "btn-sm"),
       downloadButton("dl_fasta", "Sequences (FASTA)", class = "btn-sm")),
-  actionButton("send", "Send chosen samples to Outbreak detection", class = "btn-primary", width = "100%")
+  actionButton("send", "Send chosen samples to Outbreak detection", class = "btn-primary", width = "100%"),
+  actionButton("view_add", "Add chosen samples to the set", class = "mt-2", width = "100%"),
+  uiOutput("view_set_line")
 )
 
 alignment_inputs <- tagList(
   radioButtons("aln_source", "Show", c("Results of the last run" = "run", "An earlier run folder" = "folder",
-                                        "An aligned FASTA file" = "file")),
+                                        "A FASTA file (aligned or not)" = "file", "A set" = "set")),
   conditionalPanel("input.aln_source === 'run'", uiOutput("aln_run_ui")),
   conditionalPanel("input.aln_source === 'folder'",
     shinyFiles::shinyDirButton("aln_browse", "Choose a run folder...", "Choose the folder of one run"),
     uiOutput("aln_folder_ui")),
   conditionalPanel("input.aln_source === 'file'",
     fileInput("aln_file", NULL, accept = c(".fa", ".fasta", ".fas", ".fna", ".aln", ".txt"),
-              buttonLabel = "Aligned FASTA...", placeholder = "No file chosen")),
+              buttonLabel = "FASTA file...", placeholder = "No file chosen"),
+    uiOutput("aln_file_ui")),
+  conditionalPanel("input.aln_source === 'set'", uiOutput("aln_set_ui")),
   uiOutput("aln_rows_ui"),
   selectInput("aln_anchor", "Compare with", c("Majority consensus" = "")),
   checkboxInput("aln_variable", "Variable columns only"),
@@ -126,6 +144,34 @@ alignment_inputs <- tagList(
       downloadButton("aln_dl_pdf", "PDF (on screen)", class = "btn-sm"),
       actionButton("aln_png", "Picture (PNG)", icon = icon("download"), class = "btn-sm"),
       downloadButton("aln_dl_html", "Interactive page (HTML)", class = "btn-sm"))
+)
+
+sets_inputs <- tagList(
+  uiOutput("set_list_ui"),
+  div(class = "d-flex gap-2 flex-wrap mb-2",
+      actionButton("set_new", "New set", class = "btn-sm"),
+      shinyFiles::shinyDirButton("set_open", "Open a set folder...", "Choose the folder of a saved set", class = "btn-sm")),
+  hr(class = "my-2"),
+  textInput("set_name", "Name of the open set", width = "100%"),
+  textInput("set_dir", "Save in", width = "100%"),
+  shinyFiles::shinyDirButton("set_browse", "Browse...", "Choose the folder to save the set in"),
+  div(class = "d-flex gap-2 mt-2",
+      actionButton("set_save", "Save", class = "btn-primary"),
+      actionButton("set_delete", "Delete")),
+  h6("Add sequences", class = "mt-3"),
+  fileInput("set_file", NULL, accept = c(".fa", ".fasta", ".fas", ".fna", ".aln", ".txt"),
+            buttonLabel = "FASTA file...", placeholder = "aligned or not"),
+  p(class = "small text-muted",
+    "Or press", em("Add to set"), "on the Database viewer, Outbreak detection or Alignment page."),
+  h6("Alignment"),
+  uiOutput("set_align_ui"),
+  h6("Compare with a database", class = "mt-3"),
+  actionButton("set_use", "Use in Outbreak detection", class = "btn-sm"),
+  p(class = "small text-muted mt-1", "Uses the rows chosen in the table, or the whole set (at most 50)."),
+  h6("Download", class = "mt-3"),
+  div(class = "d-flex gap-2 flex-wrap",
+      downloadButton("set_dl_fasta", "Sequences (FASTA)", class = "btn-sm"),
+      downloadButton("set_dl_csv", "Table (CSV)", class = "btn-sm"))
 )
 
 # A chart tab: controls on top, then a note and the chart. With `hover`, pointing at the
@@ -175,19 +221,30 @@ ui <- page_sidebar(
     td.fhi-flag::after { content: ''; position: absolute; top: 0; right: 0; border-style: solid;
                          border-width: 0 9px 9px 0; border-color: transparent #ff7f00 transparent transparent; }
     .fhi-ring { position: absolute; z-index: 999; pointer-events: none; border-radius: 50%;
-                border: 3px solid #ff7f00; box-shadow: 0 0 0 3px rgba(255,127,0,.3); }"))),
+                border: 3px solid #ff7f00; box-shadow: 0 0 0 3px rgba(255,127,0,.3); }
+    #fhi-job { display: none; margin: 4px 0 8px; padding: 6px 8px; border: 1px solid #d8dee4; border-radius: 6px;
+               background: #f6f7f9; font-size: 13px; }
+    #fhi-job .progress { height: 8px; margin: 4px 0; }"))),
   div(id = "fhi-cell-tip", class = "fhi-tip"),
   sidebar = sidebar(
     width = 380,
     menu,
+    # The background alignment (sets, unaligned FASTA files), shown on every page.
+    div(id = "fhi-job",
+        div(strong("Aligning "), span(class = "fhi-job-label")),
+        div(class = "progress", div(class = "progress-bar", style = "width: 0%")),
+        div(class = "d-flex justify-content-between align-items-center gap-2",
+            span(class = "fhi-job-text small text-muted"),
+            actionButton("align_cancel", "Cancel", class = "btn-sm btn-outline-danger"))),
     hr(class = "my-1"),
-    conditionalPanel("input.page !== 'viewer' && input.page !== 'alignment'", outbreak_inputs),
+    conditionalPanel("input.page !== 'viewer' && input.page !== 'alignment' && input.page !== 'sets'", outbreak_inputs),
     conditionalPanel("input.page === 'viewer'", viewer_inputs),
-    conditionalPanel("input.page === 'alignment'", alignment_inputs)
+    conditionalPanel("input.page === 'alignment'", alignment_inputs),
+    conditionalPanel("input.page === 'sets'", sets_inputs)
   ),
   navset_hidden(
     id = "main",
-    nav_panel_hidden("outbreak", uiOutput("view_ui"), navset_card_tab(
+    nav_panel_hidden("outbreak", uiOutput("view_ui"), uiOutput("add_result_ui"), navset_card_tab(
       id = "tabs",
       nav_panel("Tree",
         layout_columns(col_widths = c(3, 6, 3),
@@ -224,6 +281,11 @@ ui <- page_sidebar(
     nav_panel_hidden("alignment", div(class = "px-1",
       uiOutput("aln_status"),
       div(id = "msa")
+    )),
+    nav_panel_hidden("sets", div(class = "px-1",
+      uiOutput("set_head"),
+      uiOutput("set_rows_ui"),
+      DT::DTOutput("set_table", fill = FALSE)
     ))
   )
 )
@@ -248,7 +310,7 @@ server <- function(input, output, session) {
   # A chosen FASTA file is used instead of the pasted text, until samples are sent here
   # from the Database viewer.
   use_file <- reactiveVal(FALSE)
-  observeEvent(input$fasta_file, use_file(TRUE))
+  observeEvent(input$fasta_file, { use_file(TRUE); use_set_in_run("") })
   # Text sent from the Database viewer; while it is unchanged, each query's own database
   # entry is left out of its matches.
   sent_text <- reactiveVal(NULL)
@@ -264,20 +326,30 @@ server <- function(input, output, session) {
     lines <- character(0)
     log <- function(...) lines <<- c(lines, paste0(format(Sys.time(), "%H:%M:%S  "), ...))
     res <- tryCatch({
-      text <- if (use_file()) {
-        paste(readLines(input$fasta_file$datapath, warn = FALSE), collapse = "\n")
-      } else input$fasta_text
-      queries <- parse_fasta_text(text)
+      s <- run_set()
+      if (!is.null(s)) {
+        q <- set_queries(s, input$db, set_input()$keys)
+        queries <- q$seqs
+        exclude <- q$exclude_self
+        log("Queries from the set '", s$name, "'")
+      } else {
+        text <- if (use_file()) {
+          paste(readLines(input$fasta_file$datapath, warn = FALSE), collapse = "\n")
+        } else input$fasta_text
+        queries <- parse_fasta_text(text)
+        exclude <- from_viewer()
+      }
       log("Queries: ", paste(names(queries), collapse = ", "))
       cfg$output_dir <- clean_path(input$out_dir)
       settings <- list(n_neighbours = input$n_neighbours, min_coverage = input$min_coverage,
                        aligner = input$aligner, bootstrap = input$bootstrap,
                        search = defaults$search, threads = defaults$threads,
-                       exclude_self = from_viewer())
+                       exclude_self = exclude)
       withProgress(message = "Running", value = 0, {
         steps <- 3 + 3 * (length(queries) + (length(queries) > 1))   # see run_compare()
         run_compare(queries, cfg$databases[[input$db]], cfg, settings, log = log,
-                    progress = function(step, detail = NULL) incProgress(1 / steps, step, detail))
+                    progress = function(step, detail = NULL) incProgress(1 / steps, step, detail),
+                    input = if (!is.null(s)) q$input)
       })
     }, error = function(e) {
       log("ERROR: ", conditionMessage(e))
@@ -309,6 +381,42 @@ server <- function(input, output, session) {
         p(class = "small text-muted mb-0",
           "Each query is also compared on its own: its own closest sequences, over its whole length."))
   })
+  # A set as the input, used instead of the pasted text and the file: chosen in the list
+  # under the file button, or with "Use in Outbreak detection" on the Sets page (then only
+  # the rows chosen there, if any: `keys`). Database samples from the searched database
+  # leave out their own entry (set_queries() in R/sets.R).
+  set_input <- reactiveVal(list(id = "", keys = NULL))
+  use_set_in_run <- function(id, keys = NULL) {
+    set_input(list(id = id, keys = keys))
+    updateSelectInput(session, "run_set", selected = id)
+  }
+  run_set <- reactive(if (nzchar(set_input()$id)) sets()[[set_input()$id]])
+  output$run_set_ui <- renderUI({
+    ch <- set_choices()
+    if (!length(ch)) return(NULL)
+    tagList(selectInput("run_set", "...or use a set", c("(none)" = "", ch), isolate(set_input()$id)),
+            uiOutput("run_set_note"))
+  })
+  observeEvent(input$run_set, {
+    v <- input$run_set
+    if (identical(v, set_input()$id)) return()
+    if (startsWith(v, "saved:")) {
+      open_folder(sub("^saved:", "", v))
+      v <- open_id() %||% ""
+    }
+    use_set_in_run(v)
+  })
+  output$run_set_note <- renderUI({
+    s <- run_set()
+    if (is.null(s)) return(NULL)
+    q <- tryCatch(set_queries(s, input$db, set_input()$keys), error = function(e) e)
+    if (inherits(q, "error")) return(div(class = "alert alert-warning small py-1 px-2", conditionMessage(q)))
+    p(class = "small text-muted", sprintf("Using %d sequences of the set '%s'%s, instead of the pasted text or file.",
+                                          length(q$seqs), s$name, if (length(set_input()$keys)) " (chosen on the Sets page)" else ""),
+      if (q$n_own == 1) "The sample from this database leaves out its own entry from its closest matches."
+      else if (q$n_own) sprintf("The %d samples from this database leave out their own entry from their closest matches.", q$n_own))
+  })
+
   view <- reactive({
     views <- req(result())$views
     v <- views[[input$view %||% ""]]
@@ -316,6 +424,28 @@ server <- function(input, output, session) {
     v
   })
   view_error <- function() if (!is.null(view()$error)) div(class = "alert alert-warning", view()$error)
+
+  # The shown result as a viewer alignment, knowing where its rows come from (for sets).
+  run_alignment <- function() {
+    res <- result()
+    a <- msa_from_result(view(), unlist(res$manifest$reverse_complemented))
+    a$origin <- msa_run_origin(res$manifest, basename(res$out_dir), cfg$databases)
+    a
+  }
+  add_run_rows <- function(ids) {
+    v <- view()
+    from <- paste0("Run ", basename(result()$out_dir), if (length(result()$views) > 1) paste0(" (", v$label, ")"))
+    add_to_set(set_from_msa(run_alignment(), ids, added_from = from))
+  }
+  output$add_result_ui <- renderUI({
+    v <- view()
+    if (!is.null(v$error) || is.null(v$aln_full)) return(NULL)
+    div(class = "d-flex align-items-center gap-3 mb-2",
+        actionButton("add_result", sprintf("Add the %d sequences of this result to the set", length(v$aln_full)),
+                     class = "btn-sm"),
+        set_line())
+  })
+  observeEvent(input$add_result, add_run_rows(names(view()$aln_full)))
   # Search hits and tie notes of the queries in the shown result.
   view_rows <- function(tab) if (identical(view()$label, ALL_QUERIES)) tab else tab[tab$query %in% view()$label, , drop = FALSE]
 
@@ -532,7 +662,7 @@ server <- function(input, output, session) {
 
   output$dl_csv <- downloadHandler(
     filename = function() paste0("samples_", format(Sys.Date()), ".csv"),
-    content = function(file) utils::write.csv(use_meta(), file, row.names = FALSE, na = "")
+    content = function(file) write_csv2(use_meta(), file)
   )
   output$dl_fasta <- downloadHandler(
     filename = function() paste0("samples_", format(Sys.Date()), ".fasta"),
@@ -561,12 +691,24 @@ server <- function(input, output, session) {
     updateSelectInput(session, "db", selected = input$view_db)
     sent_text(text)
     use_file(FALSE)
+    use_set_in_run("")
     session$sendCustomMessage("clear_file_input", "fasta_file")
     session$sendCustomMessage("set_page", "outbreak")
     showNotification(paste0(length(seqs), " samples copied to Outbreak detection. Press Run comparison.",
                             if (length(no_seq)) paste0(" No sequence in the database for: ", paste(no_seq, collapse = ", "))),
                      type = if (length(no_seq)) "warning" else "message", duration = if (length(no_seq)) NULL else 8)
   })
+
+  observeEvent(input$view_add, {
+    ids <- chosen()
+    if (!length(ids)) {
+      showNotification("Choose samples first: click rows in the table, or paste sample IDs.", type = "warning")
+      return()
+    }
+    cand <- aln_try(set_from_database(view_db(), cfg, ids, view_meta()$meta))
+    if (!is.null(cand)) add_to_set(cand)
+  })
+  output$view_set_line <- renderUI(set_line())
 
   # ---- Charts ----
   observeEvent(view_meta(), {
@@ -694,28 +836,108 @@ server <- function(input, output, session) {
             selectInput("aln_folder_result", "Result", names(f)))
   })
 
+  # A FASTA file that is not aligned, or a set without an alignment, gives no alignment
+  # (a = NULL) but a message (`wait`) until it is aligned in the background.
+  file_alignments <- reactiveVal(list())   # unaligned FASTA files aligned here, by file key
   aln_base <- reactive({
     src <- input$aln_source %||% "run"
     if (src == "run") {
       res <- req(result())
       v <- res$views[[req(input$aln_view)]]
       req(v, is.null(v$error))
-      list(key = paste("run", res$out_dir, v$label), a = msa_from_result(v, unlist(res$manifest$reverse_complemented)))
+      a <- msa_from_result(v, unlist(res$manifest$reverse_complemented))
+      a$origin <- msa_run_origin(res$manifest, basename(res$out_dir), cfg$databases)
+      list(key = paste("run", res$out_dir, v$label), a = a)
     } else if (src == "folder") {
       f <- req(aln_folder())
       i <- req(match(input$aln_folder_result, names(f)))
-      a <- aln_try(msa_load_run_folder(f[[i]], paste0(basename(attr(f, "dir")), ": ", names(f)[i]),
-                                       attr(f, "manifest"), attr(f, "regions")[[i]], attr(f, "dropped")[[i]]))
-      list(key = paste("folder", f[[i]]), a = req(a))
-    } else {
+      a <- req(aln_try(msa_load_run_folder(f[[i]], paste0(basename(attr(f, "dir")), ": ", names(f)[i]),
+                                           attr(f, "manifest"), attr(f, "regions")[[i]], attr(f, "dropped")[[i]])))
+      a$origin <- msa_run_origin(attr(f, "manifest"), basename(attr(f, "dir")), cfg$databases)
+      list(key = paste("folder", f[[i]]), a = a)
+    } else if (src == "file") {
       file <- req(input$aln_file)
-      a <- aln_try(msa_load(msa_read_fasta(file$datapath), file$name))
-      list(key = paste("file", file$name, file$size), a = req(a))
+      key <- paste("file", file$name, unname(tools::md5sum(file$datapath)))
+      seqs <- req(aln_try(msa_read_fasta(file$datapath)))
+      done <- NULL
+      if (length(unique(nchar(seqs))) == 1) {
+        a <- req(aln_try(msa_load(seqs, file$name)))
+      } else {
+        done <- file_alignments()[[key]]
+        if (is.null(done)) {
+          return(list(key = key, a = NULL, seqs = gsub("[-.]", "", seqs), wait = tagList(
+            "The sequences in this file are not aligned (they have different lengths). Press ",
+            em("Align these sequences"), " on the left: it runs in the background, and the window stays usable.")))
+        }
+        a <- msa_load(done$aln, file$name, revcomp = done$turned, note = paste0(
+          sprintf("Aligned by FHInumerics on %s (DECIPHER).", done$made),
+          if (length(done$turned)) paste0(" Turned (reverse complement) for the alignment, so numbered on the reverse complement: ",
+                                          paste(done$turned, collapse = ", "), ".")))
+      }
+      a$origin <- list(kind = "file", file = file$name, made = done$made, method = done$method, versions = done$versions)
+      list(key = key, a = a)
+    } else {
+      req(aln_set_a())
     }
   })
+  # A set as the source: rebuilt only when that set's members or alignment change.
+  aln_set_a <- reactiveVal(NULL)
+  observe({
+    req(identical(input$aln_source, "set"))
+    id <- input$aln_set
+    s <- if (!is.null(id)) sets()[[id]]
+    if (is.null(s)) { aln_set_a(NULL); return() }
+    sig <- paste(id, s$name, s$alignment$made, paste(set_names(s$members), collapse = "\t"), sep = "\n")
+    if (identical(sig, isolate(aln_set_a())$sig)) return()
+    a <- msa_from_set(s)
+    wait <- if (is.null(a)) {
+      if (nrow(s$members) < 2) "This set has fewer than 2 sequences: add more on the Sets page or with Add to set." else
+        tagList("This set is not aligned yet. Press ", em("Align the set"),
+                " on the left: it runs in the background, and the window stays usable.")
+    }
+    aln_set_a(list(sig = sig, key = paste("set", sig), a = a, wait = wait))
+  })
+  # The viewer is hidden while there is no alignment to show.
+  observe({
+    b <- tryCatch(aln_base(), error = function(e) NULL)
+    if (is.null(b$a)) session$sendCustomMessage("msa_data", NULL)
+  })
+  output$aln_file_ui <- renderUI({
+    b <- tryCatch(aln_base(), error = function(e) NULL)
+    if (is.null(b$seqs) || !identical(input$aln_source, "file")) return(NULL)
+    actionButton("aln_file_align", "Align these sequences", class = "btn-sm btn-primary mb-2")
+  })
+  observeEvent(input$aln_file_align, {
+    b <- aln_base()
+    start_alignment("file", b$key, b$seqs, paste("the file", input$aln_file$name))
+  })
+  output$aln_set_ui <- renderUI({
+    ch <- set_choices()
+    if (!length(ch)) {
+      return(p(class = "small text-muted", "No sets yet. Make one on the", em("Sets"), "page, or press",
+               em("Add to set"), "on another page."))
+    }
+    open <- isolate(open_id())
+    if (!isTRUE(open %in% ch)) ch <- c("Choose a set" = "", ch)
+    tagList(selectInput("aln_set", "Set", ch, if (isTRUE(open %in% ch)) open else ""), uiOutput("aln_set_status"))
+  })
+  output$aln_set_status <- renderUI({
+    s <- req(sets()[[req(input$aln_set)]])
+    tagList(p(class = "small mb-1", aligning_text(input$aln_set) %||% set_alignment_text(s)),
+            actionButton("aln_set_align", "Align the set", class = "btn-sm mb-2"))
+  })
+  observeEvent(input$aln_set, {
+    v <- input$aln_set
+    if (!nzchar(v)) return()
+    if (startsWith(v, "saved:")) open_folder(sub("^saved:", "", v)) else if (!identical(v, open_id())) open_id(v)
+  })
+  observeEvent(open_id(), if (!is.null(open_id())) updateSelectInput(session, "aln_set", selected = open_id()))
+  observeEvent(input$aln_set_align, align_set(input$aln_set))
+
   # The alignment as shown: all rows, or the rows chosen for it.
   aln_shown <- reactive({
     b <- aln_base()
+    req(b$a)
     pick <- aln_pick()
     if (!identical(pick$key, b$key) || is.null(pick$rows)) return(list(key = b$key, a = b$a, pick = NULL))
     list(key = b$key, a = msa_subset(b$a, pick$rows), pick = pick)
@@ -759,10 +981,12 @@ server <- function(input, output, session) {
                                                         hide_gaps = isTRUE(input$aln_hide_gaps))))
 
   output$aln_status <- renderUI({
-    if (is.null(tryCatch(aln_base(), error = function(e) NULL))) {
-      return(p("Run a comparison on the", em("Outbreak detection"), "page, or choose an earlier run folder",
-               "or an aligned FASTA file on the left."))
+    b <- tryCatch(aln_base(), error = function(e) NULL)
+    if (is.null(b)) {
+      return(p("Run a comparison on the", em("Outbreak detection"), "page, or choose an earlier run folder,",
+               "a FASTA file or a set on the left."))
     }
+    if (is.null(b$a)) return(div(class = "msa-mode", b$wait))
     s <- aln_shown()
     a <- s$a
     v <- aln_view_data()
@@ -796,15 +1020,23 @@ server <- function(input, output, session) {
   # Query and its closest sequences (run results).
   output$aln_rows_ui <- renderUI({
     b <- tryCatch(aln_base(), error = function(e) NULL)
-    if (is.null(b)) return(NULL)
+    if (is.null(b$a)) return(NULL)
     tagList(
       if (!is.null(b$a$snp) && length(b$a$queries)) tagList(
         h6("Show a query and its closest"),
         selectInput("aln_query", "Query", b$a$queries),
         numericInput("aln_n", "Number of closest sequences", 10, min = 1, max = 500),
         actionButton("aln_closest", "Show the query and its closest", class = "btn-sm mb-2")),
-      actionButton("aln_all", "Show all sequences", class = "btn-sm mb-3")
+      div(class = "d-flex gap-2 flex-wrap mb-1",
+          actionButton("aln_all", "Show all sequences", class = "btn-sm"),
+          actionButton("aln_add", "Add the shown rows to the set", class = "btn-sm")),
+      div(class = "mb-3", uiOutput("aln_set_line"))
     )
+  })
+  output$aln_set_line <- renderUI(set_line())
+  observeEvent(input$aln_add, {
+    a <- aln_shown()$a
+    add_to_set(set_from_msa(a, rownames(a$m), added_from = paste("Alignment page:", a$label)))
   })
   observeEvent(input$aln_closest, {
     b <- aln_base()
@@ -836,8 +1068,10 @@ server <- function(input, output, session) {
     }
     div(class = "d-flex align-items-center gap-2 mb-2", strong(length(ids), "chosen"),
         actionButton("snp_show", "Show in Alignment", class = "btn-sm btn-primary"),
+        actionButton("snp_add", "Add to set", class = "btn-sm"),
         actionButton("snp_unpick", "Clear", class = "btn-sm"))
   })
+  observeEvent(input$snp_add, add_run_rows(snp_picked()))
   observeEvent(input$snp_show, show_in_alignment(snp_picked(), note = sprintf(
     "Showing the %d sequences chosen in the SNP table.", length(snp_picked()))))
   observeEvent(input$snp_unpick, { snp_picked(character(0)); session$sendCustomMessage("snp_clear", TRUE) })
@@ -862,8 +1096,10 @@ server <- function(input, output, session) {
     ids <- tree_brushed()
     if (!length(ids)) return(NULL)
     div(class = "d-flex align-items-center gap-2 mb-2", strong(length(ids), "chosen in the tree"),
-        actionButton("tree_show", "Show in Alignment", class = "btn-sm btn-primary"))
+        actionButton("tree_show", "Show in Alignment", class = "btn-sm btn-primary"),
+        actionButton("tree_add", "Add to set", class = "btn-sm"))
   })
+  observeEvent(input$tree_add, add_run_rows(tree_brushed()))
   observeEvent(input$tree_show, show_in_alignment(tree_brushed(), note = sprintf(
     "Showing the %d sequences chosen in the tree.", length(tree_brushed()))))
 
@@ -907,8 +1143,359 @@ server <- function(input, output, session) {
     content = function(file) msa_html(aln_shown()$a, aln_view_data(), file, sort = input$msa_window$sort)
   )
 
-  # When started from the launcher, stop the app once the browser tab is closed.
+  # ==== Sets ===========================================================================
+  # Sets in memory (by id), the open one (where "Add to set" adds), and the sets saved in
+  # the default place (<results folder>/sets), listed until they are opened.
+  sets <- reactiveVal(list())
+  open_id <- reactiveVal(NULL)
+  n_made <- 0L
+  default_sets_dir <- function() unique(c(file.path(cfg$output_dir, "sets"),
+                                          file.path(clean_path(isolate(input$out_dir) %||% cfg$output_dir), "sets")))
+  list_saved <- function() unique(do.call(rbind, lapply(default_sets_dir(), set_list_saved)))
+  saved_sets <- reactiveVal(list_saved())
+  open_set <- reactive(if (!is.null(open_id())) sets()[[open_id()]])
+  put_set <- function(id, s) { all <- sets(); all[[id]] <- s; sets(all) }
+  add_set <- function(s) {
+    n_made <<- n_made + 1L
+    id <- paste0("set", n_made)
+    put_set(id, s)
+    open_id(id)
+    id
+  }
+  make_new_set <- function() {
+    used <- c(vapply(sets(), function(s) s$name, ""), saved_sets()$name)
+    k <- 1
+    while (paste("Set", k) %in% used) k <- k + 1
+    add_set(set_new(paste("Set", k), save_in = default_sets_dir()[length(default_sets_dir())]))
+  }
+  open_folder <- function(path) {
+    path <- normalizePath(path)
+    have <- Filter(function(s) identical(s$folder, path), sets())
+    if (length(have)) return(open_id(names(have)[1]))
+    s <- aln_try(set_load(path))
+    if (!is.null(s)) add_set(s)
+  }
+
+  # Add candidates (R/sets.R) to the open set, or to a new one.
+  add_to_set <- function(cand) {
+    if (is.null(cand)) return()
+    if (!nrow(cand$members) && !length(cand$missing)) {
+      showNotification("Nothing to add.", type = "warning")
+      return()
+    }
+    id <- open_id() %||% make_new_set()
+    r <- set_add(sets()[[id]], cand)
+    put_set(id, r$set)
+    showNotification(set_add_message(r, cand$missing), type = if (length(r$added)) "message" else "warning", duration = 10)
+  }
+  # The line under each "Add to set" button.
+  set_line <- function() {
+    s <- open_set()
+    p(class = "small text-muted mb-0", if (is.null(s)) "Adds to a new set (see the Sets page)." else
+      sprintf("Adds to the set '%s' (%d sequences), open on the Sets page.", s$name, nrow(s$members)))
+  }
+  set_choices <- reactive({
+    mem <- sets()
+    saved <- saved_sets()
+    saved <- saved[!saved$folder %in% vapply(mem, function(s) s$folder %||% "", ""), , drop = FALSE]
+    stats::setNames(c(names(mem), sprintf("saved:%s", saved$folder)),
+                    c(vapply(mem, function(s) s$name, ""), sprintf("%s (saved)", saved$name)))
+  })
+
+  output$set_list_ui <- renderUI({
+    mem <- sets()
+    saved <- saved_sets()
+    saved <- saved[!saved$folder %in% vapply(mem, function(s) s$folder %||% "", ""), , drop = FALSE]
+    if (!length(mem) && !nrow(saved)) {
+      return(p(class = "small text-muted", "No sets yet. Press", em("New set"), "or", em("Add to set"),
+               "on another page."))
+    }
+    labels <- c(vapply(mem, function(s) sprintf("%s (%d%s)", s$name, nrow(s$members),
+                                                 if (s$dirty) ", not saved" else ", saved"), ""),
+                sprintf("%s (%s, saved)", saved$name, saved$n))
+    radioButtons("set_pick", "Sets", stats::setNames(c(names(mem), sprintf("saved:%s", saved$folder)), labels),
+                 selected = open_id() %||% character(0))
+  })
+  observeEvent(input$set_pick, {
+    v <- input$set_pick
+    if (startsWith(v, "saved:")) open_folder(sub("^saved:", "", v)) else if (!identical(v, open_id())) open_id(v)
+  })
+  observeEvent(input$set_new, make_new_set())
+  shinyFiles::shinyDirChoose(input, "set_open", roots = aln_roots, session = session)
+  observeEvent(input$set_open, {
+    path <- shinyFiles::parseDirPath(aln_roots(), input$set_open)
+    if (length(path)) open_folder(path)
+  })
+
+  # Name and folder of the open set. A new name is used at the next Save ("Save as"): the
+  # set is then saved in a new folder, and the old one stays.
+  observeEvent(open_id(), {
+    s <- open_set()
+    updateTextInput(session, "set_name", value = s$name %||% "")
+    updateTextInput(session, "set_dir", value = s$save_in %||% default_sets_dir()[1])
+  }, ignoreNULL = FALSE)
+  set_name_typed <- debounce(reactive(input$set_name), 600)
+  observeEvent(set_name_typed(), {
+    s <- open_set()
+    name <- trimws(set_name_typed())
+    if (is.null(s) || !nzchar(name) || identical(name, s$name)) return()
+    if (name %in% vapply(sets()[names(sets()) != open_id()], function(x) x$name, "")) {
+      showNotification(sprintf("Another open set is already called '%s'. Choose another name.", name), type = "warning")
+      return()
+    }
+    s$history <- c(s$history, sprintf("%s renamed from '%s'", format(Sys.time(), "%Y-%m-%d %H:%M"), s$name))
+    s$name <- name
+    s$dirty <- TRUE
+    put_set(open_id(), s)
+  })
+  observeEvent(input$set_dir, {
+    s <- open_set()
+    if (!is.null(s) && nzchar(input$set_dir) && !identical(clean_path(input$set_dir), s$save_in)) {
+      s$save_in <- clean_path(input$set_dir)
+      put_set(open_id(), s)
+    }
+  })
+  shinyFiles::shinyDirChoose(input, "set_browse", roots = aln_roots, session = session)
+  observeEvent(input$set_browse, {
+    path <- shinyFiles::parseDirPath(aln_roots(), input$set_browse)
+    if (length(path)) updateTextInput(session, "set_dir", value = path)
+  })
+
+  # Save: into <Save in>/<name>/. A different saved set there is replaced only after asking.
+  pending_save <- NULL
+  do_save <- function(id, folder) {
+    s <- aln_try(set_save(sets()[[id]], folder))
+    if (is.null(s)) return()
+    all <- sets()
+    for (k in setdiff(names(all), id)) {   # another open set that was saved there is now unsaved
+      if (identical(all[[k]]$folder, s$folder)) { all[[k]]$folder <- NULL; all[[k]]$dirty <- TRUE }
+    }
+    all[[id]] <- s
+    sets(all)
+    saved_sets(list_saved())
+    showNotification(paste("Set saved in", s$folder), type = "message", duration = 8)
+  }
+  observeEvent(input$set_save, {
+    s <- open_set()
+    if (is.null(s)) return(showNotification("No set is open. Press New set, or Add to set on another page.", type = "warning"))
+    if (!nrow(s$members)) return(showNotification("The set is empty: add sequences first.", type = "warning"))
+    folder <- file.path(clean_path(input$set_dir), set_folder_name(s$name))
+    state <- set_folder_state(folder)
+    if (state == "other") {
+      return(showNotification(paste("The folder", folder, "already exists and holds other files.",
+                                    "Choose another name or another folder."), type = "error", duration = NULL))
+    }
+    if (state == "set" && !identical(normalizePath(folder), s$folder)) {
+      pending_save <<- list(id = open_id(), folder = folder)
+      return(showModal(modalDialog(title = "Replace the saved set?",
+        sprintf("A saved set is already in %s. Replace it with the set '%s'?", folder, s$name),
+        footer = tagList(modalButton("Cancel"), actionButton("set_replace", "Replace", class = "btn-danger")))))
+    }
+    do_save(open_id(), folder)
+  })
+  observeEvent(input$set_replace, {
+    removeModal()
+    if (!is.null(pending_save)) do_save(pending_save$id, pending_save$folder)
+    pending_save <<- NULL
+  })
+
+  # Delete: a saved set's files (only those FHInumerics writes), or an unsaved set.
+  observeEvent(input$set_delete, {
+    s <- open_set()
+    if (is.null(s)) return()
+    saved <- !is.null(s$folder) && file.exists(file.path(s$folder, "set.yaml"))
+    showModal(modalDialog(title = "Delete the set?",
+      if (saved) sprintf("Delete the saved set '%s'? Its files in %s are removed.", s$name, s$folder)
+      else sprintf("Remove the set '%s'? It has not been saved, so it will be gone.", s$name),
+      footer = tagList(modalButton("Cancel"), actionButton("set_delete_ok", "Delete", class = "btn-danger"))))
+  })
+  observeEvent(input$set_delete_ok, {
+    removeModal()
+    s <- open_set()
+    left <- character(0)
+    if (!is.null(s$folder) && file.exists(file.path(s$folder, "set.yaml"))) {
+      left <- aln_try(set_delete(s$folder))
+      if (is.null(left)) return()
+    }
+    all <- sets()
+    all[[open_id()]] <- NULL
+    sets(all)
+    open_id(if (length(all)) names(all)[1])
+    saved_sets(list_saved())
+    showNotification(paste0("The set '", s$name, "' was deleted.",
+                            if (length(left)) paste0(" Other files were left in its folder: ", paste(left, collapse = ", "))),
+                     type = "message", duration = if (length(left)) NULL else 6)
+  })
+
+  observeEvent(input$set_file, {
+    add_to_set(aln_try(set_from_fasta(input$set_file$datapath, input$set_file$name)))
+    session$sendCustomMessage("clear_file_input", "set_file")
+  })
+
+  # The open set: heading, table of members (click rows to remove them), downloads.
+  output$set_head <- renderUI({
+    s <- open_set()
+    if (is.null(s)) {
+      return(p("No set is open. Press", em("New set"), "on the left, or", em("Add to set"),
+               "on the Database viewer, Outbreak detection or Alignment page."))
+    }
+    m <- s$members
+    from <- c(sprintf("%d from %s", as.vector(table(m$database[m$source == "database"])),
+                      names(table(m$database[m$source == "database"]))),
+              if (any(m$source == "query")) sprintf("%d %s", sum(m$source == "query"), if (sum(m$source == "query") == 1) "query" else "queries"),
+              if (any(m$source == "file")) sprintf("%d from files", sum(m$source == "file")))
+    tagList(
+      div(class = "msa-head", h5(s$name), div(class = "msa-sub", paste(c(
+        sprintf("%d sequences", nrow(m)), from,
+        if (s$dirty) "not saved" else paste("saved in", s$folder)), collapse = " · "))),
+      p(class = "small text-muted mt-1",
+        "Click rows to choose them, then press Remove. Add sequences with Add to set on the other pages,",
+        "or with a FASTA file on the left. Show the set in the Alignment page with Show in Alignment."),
+      div(class = "msa-mode", aligning_text(open_id()) %||% set_alignment_text(s))
+    )
+  })
+  output$set_rows_ui <- renderUI({
+    n <- length(input$set_table_rows_selected)
+    if (!n || is.null(open_set())) return(NULL)
+    div(class = "d-flex align-items-center gap-2 mb-2", strong(n, "chosen"),
+        actionButton("set_remove", "Remove from the set", class = "btn-sm btn-danger"),
+        actionButton("set_use_rows", "Use the chosen in Outbreak detection", class = "btn-sm"))
+  })
+  use_open_set <- function() {
+    s <- open_set()
+    if (is.null(s)) return(showNotification("No set is open.", type = "warning"))
+    keys <- s$members$key[input$set_table_rows_selected]
+    q <- aln_try(set_queries(s, NULL, keys))
+    if (is.null(q)) return()
+    use_set_in_run(open_id(), if (length(keys)) keys)
+    session$sendCustomMessage("set_page", "outbreak")
+    showNotification(sprintf("%d sequences of the set '%s' will be compared. Choose the database and press Run comparison.",
+                             length(q$seqs), s$name), type = "message", duration = 8)
+  }
+  observeEvent(input$set_use, use_open_set())
+  observeEvent(input$set_use_rows, use_open_set())
+  output$set_table <- DT::renderDT({
+    s <- req(open_set())
+    tab <- set_table(s)
+    DT::datatable(tab, class = "display nowrap", fillContainer = FALSE, rownames = FALSE, filter = "top", selection = "multiple",
+                  options = list(scrollX = TRUE, pageLength = 25,
+                                 columnDefs = list(list(visible = FALSE, targets = match("database_md5", names(tab)) - 1))))
+  }, server = FALSE)
+  observeEvent(input$set_remove, {
+    s <- open_set()
+    keys <- s$members$key[input$set_table_rows_selected]
+    put_set(open_id(), set_remove(s, keys))
+    showNotification(sprintf("%d removed from the set '%s'.", length(keys), s$name), type = "message")
+  })
+  set_file_name <- function(ext) paste0("set_", gsub("[^A-Za-z0-9._-]+", "_", open_set()$name %||% "set"), ext)
+  output$set_dl_fasta <- downloadHandler(
+    filename = function() set_file_name(".fasta"),
+    content = function(file) write_fasta(set_fasta(req(open_set())), file)
+  )
+  output$set_dl_csv <- downloadHandler(
+    filename = function() set_file_name(".csv"),
+    content = function(file) write_csv2(set_table(req(open_set())), file)
+  )
+  output$set_align_ui <- renderUI({
+    s <- open_set()
+    if (is.null(s)) return(NULL)
+    tagList(p(class = "small mb-1", aligning_text(open_id()) %||% set_alignment_text(s)),
+            div(class = "d-flex gap-2 flex-wrap",
+                actionButton("set_align", "Align the set", class = "btn-sm"),
+                actionButton("set_show", "Show in Alignment", class = "btn-sm btn-primary")))
+  })
+  observeEvent(input$set_align, align_set(open_id()))
+  observeEvent(input$set_show, {
+    updateRadioButtons(session, "aln_source", selected = "set")
+    updateSelectInput(session, "aln_set", selected = open_id())
+    session$sendCustomMessage("set_page", "alignment")
+  })
+  # Ask before the tab is closed while a set has unsaved changes.
+  observe(session$sendCustomMessage("sets_unsaved", any(vapply(sets(), function(s) isTRUE(s$dirty), TRUE))))
+
+  # ---- Background alignment (one at a time): sets and unaligned FASTA files ----
+  job <- reactiveVal(NULL)
+  pending_align <- NULL
+  start_alignment <- function(kind, target, seqs, label) {
+    if (!is.null(job())) {
+      return(showNotification(sprintf("An alignment is already running (%s). Wait for it to finish, or press Cancel.",
+                                      job()$label), type = "warning"))
+    }
+    if (length(seqs) < 2) return(showNotification("At least 2 sequences are needed for an alignment.", type = "warning"))
+    go <- function() {
+      j <- aln_try(align_start(seqs, defaults$threads))
+      if (is.null(j)) return()
+      job(list(env = j, kind = kind, target = target, label = label))
+      session$sendCustomMessage("align_job", list(label = sprintf("%s (%d sequences)", label, length(seqs)),
+                                                  value = 0, text = "Starting"))
+    }
+    if (length(seqs) > SET_ALIGN_WARN) {
+      pending_align <<- go
+      return(showModal(modalDialog(title = "Align many sequences?",
+        sprintf(paste("%s has %d sequences. Aligning more than %d can take several minutes (about 1.5 minutes",
+                      "for 1,800 HAV sequences on a fast computer). It runs in the background: the window stays",
+                      "usable, and Cancel stops it. Align now?"), label, length(seqs), SET_ALIGN_WARN),
+        footer = tagList(modalButton("Not now"), actionButton("align_go", "Align", class = "btn-primary")))))
+    }
+    go()
+  }
+  aligning_text <- function(id) {
+    j <- job()
+    if (!is.null(j) && j$kind == "set" && identical(j$target, id)) "Being aligned now: see the progress box under the menu."
+  }
+  observeEvent(input$align_go, { removeModal(); if (!is.null(pending_align)) pending_align(); pending_align <<- NULL })
+  align_set <- function(id) {
+    s <- if (!is.null(id)) sets()[[id]]
+    if (is.null(s)) return(showNotification("No set is open.", type = "warning"))
+    start_alignment("set", id, stats::setNames(unname(s$seqs[s$members$key]), s$members$key), sprintf("the set '%s'", s$name))
+  }
+  observe({
+    j <- job()
+    req(j)
+    invalidateLater(500)
+    st <- align_poll(j$env)
+    if (!st$done) {
+      secs <- round(as.numeric(difftime(Sys.time(), j$env$started, units = "secs")))
+      return(session$sendCustomMessage("align_job", list(label = sprintf("%s (%d sequences)", j$label, j$env$n),
+                                                         value = st$value, text = sprintf("%s · %d s", st$text, secs))))
+    }
+    job(NULL)
+    session$sendCustomMessage("align_job", list())
+    if (!is.null(st$error)) return(showNotification(st$error, type = "error", duration = NULL))
+    res <- st$result
+    secs <- round(as.numeric(difftime(Sys.time(), j$env$started, units = "secs")))
+    if (j$kind == "set") {
+      s <- isolate(sets())[[j$target]]
+      if (is.null(s)) return()   # deleted meanwhile
+      s$alignment <- res[c("aln", "turned", "made", "from", "method", "versions")]
+      s$history <- c(s$history, sprintf("%s aligned (%d sequences)", res$made, length(res$aln)))
+      s$dirty <- TRUE
+      put_set(j$target, s)
+      turned <- set_alignment_status(s)$turned
+    } else {
+      done <- file_alignments()
+      done[[j$target]] <- res
+      file_alignments(done)
+      turned <- res$turned
+    }
+    showNotification(paste0(sprintf("Done: %s is aligned (%d s).", j$label, secs),
+                            if (length(turned)) paste0(" Turned (reverse complement): ", paste(turned, collapse = ", "), ".")),
+                     type = "message", duration = 10)
+  })
+  observeEvent(input$align_cancel, {
+    j <- job()
+    if (is.null(j)) return()
+    align_cancel(j$env)
+    job(NULL)
+    session$sendCustomMessage("align_job", list())
+    showNotification("The alignment was cancelled.", type = "message")
+  })
+
+  # When started from the launcher, stop the app once the browser tab is closed. A running
+  # background alignment is stopped in any case.
   session$onSessionEnded(function() {
+    j <- isolate(job())
+    if (!is.null(j)) align_cancel(j$env)
     if (isTRUE(getOption("fhinumerics.stop_on_close"))) stopApp()
   })
 }
