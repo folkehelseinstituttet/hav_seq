@@ -1106,6 +1106,16 @@ summary_tbl <- summary_tbl %>%
           str_to_upper(replace_na(clade, "")),
       TRUE ~ NA
     )
+  ) %>%
+  left_join(
+    meta %>%
+      select(id, sample_date) %>%
+      mutate(
+        sseqid = id,
+        blast_hit_sample_date = sample_date
+      ) %>%
+      select(sseqid, blast_hit_sample_date),
+    by = "sseqid"
   )
 
 # ── Read samplesheet for LabWareID and SequenceID ─────────────────────────────
@@ -1891,51 +1901,113 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
   pull(variant) %>%
   unique()
   
-  variant_suggestions <- summary_tbl %>%
+  # Extract year from hit variant (e.g., NOR-2025-V2 → 2025)
+  # Vectorized version that works element-by-element
+  extract_variant_year <- function(variant_str) {
+    year_match <- str_extract(variant_str, "NOR-([0-9]+)", group = 1)
+    as.integer(year_match)
+  }
+  
+  # Names come from propose_variant_names.R (run before the outbreak trees), so the
+  # report, counts and tree labels all use the same proposed names.
+  proposed_tbl <- safe_tsv(file.path(params$out_base, "proposed_variants.tsv"),
+                           col_types = cols(.default = col_character()))
+  if (nrow(proposed_tbl) == 0) {
+    proposed_tbl <- tibble(qseqid = character(), proposed_variant = character(),
+                           proposed_display = character(), dup_of = character())
+    cat("*proposed_variants.tsv not found — run scripts/propose_variant_names.R.*\n\n")
+  }
+
+  vs_base <- summary_tbl %>%
     select(seqName, clade, blast_genotype, blast_variant, blast_mismatch, sseqid) %>%
     mutate(
-      variant_suggestion = case_when(
-        !is.na(blast_mismatch) & blast_mismatch == 0 & !is.na(blast_variant) ~ blast_variant,
-        !is.na(blast_mismatch) & blast_mismatch == 1 & !is.na(blast_variant) ~ {
-          suggested_suffix <- suggest_suffix(blast_variant, all_db_variants)
-          paste0(blast_variant, suggested_suffix, " (1 SNP diff)")
-        },
-        !is.na(blast_mismatch) & blast_mismatch == 2 & !is.na(blast_variant) ~ {
-          suggested_suffix <- suggest_suffix(blast_variant, all_db_variants)
-          paste0(blast_variant, suggested_suffix, " (2 SNP diff)")
-        },
-        is.na(blast_variant) ~ "No BLAST hit — needs manual assignment",
-        TRUE ~ "Review: >2 SNP difference from best hit"
-      ),
+      hit_year = extract_variant_year(blast_variant),
+      is_different_year = !is.na(hit_year) & (hit_year != variant_year),
+      join_key = word(seqName, 1)
+    ) %>%
+    left_join(
+      proposed_tbl %>%
+        transmute(join_key = qseqid,
+                  proposed_variant = na_if(proposed_variant, ""),
+                  proposed_display = na_if(proposed_display, ""),
+                  dup_of = na_if(dup_of, "")),
+      by = "join_key"
+    ) %>%
+    left_join(
+      meta %>%
+        select(id, sample_date) %>%
+        mutate(
+          sseqid = id,
+          hit_sample_date = sample_date
+        ) %>%
+        select(sseqid, hit_sample_date),
+      by = "sseqid"
+    )
+
+  assigned_clean <- vs_base$proposed_variant
+  assigned <- coalesce(vs_base$proposed_display, "—")
+  dup_of <- vs_base$dup_of
+
+  # Clean proposed names, reused by the outbreak detection section
+  batch_proposed_variants <- tibble(seqName = vs_base$seqName, proposed_variant = assigned_clean)
+
+  variant_suggestions <- vs_base %>%
+    mutate(
+      variant_suggestion = assigned,
+      hit_sample_date = coalesce(hit_sample_date, "—"),
       notes = case_when(
-        !is.na(blast_mismatch) & blast_mismatch == 0 ~ "Identical to database sequence",
-        !is.na(blast_mismatch) & blast_mismatch <= 2 ~ paste("Close to", sseqid),
-        TRUE ~ ""
+        !is.na(dup_of) ~ paste0("Identical to ", dup_of, " in this batch"),
+        !is.na(blast_mismatch) & blast_mismatch == 0 & is_different_year ~ 
+          paste0("Identical to ", blast_variant, " (but from different year)"),
+        !is.na(blast_mismatch) & blast_mismatch == 0 ~ paste0("Identical to ", blast_variant),
+        !is.na(blast_mismatch) & blast_mismatch <= 2 ~ paste0("Close to ", blast_variant),
+        is.na(blast_variant) ~ "No BLAST hit",
+        TRUE ~ paste0(">2 SNPs from nearest variant ", blast_variant)
       )
     ) %>%
     select(
       Sequence = seqName,
       Genotype = clade,
       `BLAST hit` = sseqid,
+      `BLAST hit sample date` = hit_sample_date,
       `SNPs` = blast_mismatch,
       `Hit variant` = blast_variant,
       `Suggested variant` = variant_suggestion,
       Notes = notes
     )
   
-  cat(variant_suggestions %>%
-        kbl(escape = FALSE) %>%
-        kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
-        as.character())
+  cat(
+  variant_suggestions %>%
+    kbl(
+      escape = FALSE,
+      table.attr = 'style="width: auto;"'
+    ) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE
+    ) %>%
+    column_spec(1, width = "16em", extra_css = "white-space: nowrap;") %>%  # Sequence
+    column_spec(3, width = "16em", extra_css = "white-space: nowrap;") %>%  # BLAST hit
+    column_spec(4, width = "10em", extra_css = "white-space: nowrap;") %>%  # BLAST hit sample date
+    column_spec(6, width = "14em", extra_css = "white-space: nowrap;") %>%  # Hit variant
+    column_spec(7, width = "14em", extra_css = "white-space: nowrap;") %>%  # Suggested variant
+    column_spec(8, width = "24em", extra_css = "white-space: nowrap;") %>%  # Notes
+    scroll_box(width = "100%") %>%
+    as.character()
+)
 } else {
   cat("*No sequences for variant naming.*\n\n")
 }
 ```
 
 **Variant naming protocol:**
-- **Identical to database (0 SNPs):** Assign same variant as BLAST hit
-- **1-2 SNPs from database sequence:** Check database for existing b/c suffixes, suggest next available (e.g., b if none exist, c if b exists)
-- **>2 SNPs:** Manual review required; may warrant new variant number
+- **Identical to database (0 SNPs) from different year:** Assign new year-specific variant with next available sequence number (e.g., NOR-2026-V4 for first, NOR-2026-V5 for second, etc.)
+- **1-2 SNPs from a different-year variant:** New current-year number, no suffix (see above)
+- **1-2 SNPs from a same-year variant:** Same stem as nearest hit + first free letter, skipping 'a' (e.g., NOR-2026-V4b, then V4c)
+- **Same year match:** Use database variant unchanged
+- **No BLAST hit or >2 SNPs:** Next free number for the current year (no suffix)
+- **Identical sequences within the batch:** Share the same suggested variant name
+- **Note:** Variants are assigned sequentially to different sequences in the batch. If seq1 needs V4, seq2 (if also needing new variant) gets V5, seq3 gets V6, etc.
 
 ---
 
@@ -1995,142 +2067,257 @@ extract_base_variant <- function(variant) {
 }
 
 
-# Identify batch variants:
-# For each batch sequence, get best BLAST hit (first row, sorted by score)
-# Then look up the variant from database metadata
-# Group by BASE variant (removing sub-variant suffixes like a/b/c)
-batch_variants <- blast_data %>%
-  arrange(
-    qseqid,
-    mismatch,
-    desc(bitscore)
-  ) %>%
-  group_by(qseqid) %>%
-  slice_head(n = 1) %>%
-  ungroup() %>%
+# Function to extract year from variant name (e.g., NOR-2025-V2 → 2025)
+# Vectorized version that works element-by-element
+extract_variant_year_outbreak <- function(variant_str) {
+  year_match <- str_extract(variant_str, "NOR-([0-9]+)", group = 1)
+  as.integer(year_match)
+}
+
+# For each batch sequence, identify all similar variants (including direct hit and alternatives)
+# This creates a "similarity group" based on the BLAST analysis
+# Use triage_tbl since it has the similar_variants joined in
+batch_sequence_groups <- triage_tbl %>%
+  filter(!is.na(blast_variant)) %>%
   select(
-    qseqid,
-    sseqid
+    seqName,
+    blast_variant,
+    similar_variants
   ) %>%
   mutate(
-    sseqid_norm = outbreak_norm_id(sseqid)
+    # Create a list of all similar variants for this sequence
+    all_similar = if_else(
+      is.na(similar_variants) | similar_variants == "",
+      blast_variant,  # Just the main variant if no similar ones
+      paste(blast_variant, similar_variants, sep = ", ")
+    ),
+    # Parse the comma-separated list of variants
+    variant_list = str_split(all_similar, ",\\s*")
   ) %>%
-  left_join(
+  select(seqName, variant_list) %>%
+  # Unnest to get one row per variant per sequence
+  unnest(variant_list) %>%
+  mutate(
+    variant_list = trimws(variant_list),
+    year = extract_variant_year_outbreak(variant_list)
+  )
+
+# Include ALL a/b/c/d... suffix variants of each hit's base variant (e.g. NOR-2024-V6,
+# V6a, V6b, V6c), regardless of SNP distance to the query.
+if (nrow(batch_sequence_groups) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
+  db_variants_by_base <- meta %>%
+    filter(!is.na(variant), variant != "") %>%
+    distinct(variant) %>%
+    mutate(variant_base = extract_base_variant(variant))
+
+  suffix_expansion <- batch_sequence_groups %>%
+    mutate(variant_base = extract_base_variant(variant_list)) %>%
+    distinct(seqName, variant_base) %>%
+    filter(!is.na(variant_base)) %>%
+    inner_join(db_variants_by_base, by = "variant_base",
+               relationship = "many-to-many") %>%
+    transmute(
+      seqName,
+      variant_list = variant,
+      year = extract_variant_year_outbreak(variant)
+    )
+
+  batch_sequence_groups <- bind_rows(batch_sequence_groups, suffix_expansion) %>%
+    distinct()
+}
+
+# Group sequences that are similar to each other
+# Use the smallest group ID to identify unique similarity groups
+if (nrow(batch_sequence_groups) > 0) {
+  # Create similarity groups: sequences that share any variant are in the same group
+  # Each batch sequence belongs to exactly one group: sequences are linked when they
+  # share a base variant (V6 ~ V6a ~ V6b ...), directly or through similar variants.
+  seq_base <- batch_sequence_groups %>%
+    mutate(variant_base = extract_base_variant(variant_list)) %>%
+    filter(!is.na(variant_base)) %>%
+    distinct(seqName, variant_base)
+
+  bases <- unique(seq_base$variant_base)
+  comp <- setNames(seq_along(bases), bases)
+  repeat {
+    seq_min <- tapply(comp[seq_base$variant_base], seq_base$seqName, min)
+    cand <- as.integer(seq_min[seq_base$seqName])
+    upd <- tapply(cand, seq_base$variant_base, min)
+    new_comp <- comp
+    new_comp[names(upd)] <- pmin(comp[names(upd)], as.integer(upd))
+    if (all(new_comp == comp)) break
+    comp <- new_comp
+  }
+  base_group <- tibble(
+    variant_base = names(comp),
+    group_id = as.integer(factor(unname(comp)))
+  )
+  
+  # Group key = sorted base variants joined by "_" (matches tree PNG file names)
+  group_key_map <- base_group %>%
+    group_by(group_id) %>%
+    summarise(group_key = paste(sort(variant_base), collapse = "_"), .groups = "drop")
+
+  # Proposed (new) variant name per batch sequence from section 3
+  if (!exists("batch_proposed_variants")) {
+    batch_proposed_variants <- tibble(seqName = character(), proposed_variant = character())
+  }
+  seq_proposed <- triage_tbl %>%
+    distinct(seqName, blast_variant) %>%
+    left_join(batch_proposed_variants, by = "seqName") %>%
+    mutate(counted_variant = coalesce(proposed_variant, blast_variant))
+
+  # All variants (any year, any suffix) in each group, plus the proposed names
+  group_variants <- batch_sequence_groups %>%
+    mutate(variant_base = extract_base_variant(variant_list)) %>%
+    inner_join(base_group, by = "variant_base") %>%
+    distinct(group_id, variant = variant_list) %>%
+    bind_rows(
+      seq_proposed %>%
+        filter(!is.na(blast_variant), !is.na(counted_variant)) %>%
+        mutate(variant_base = extract_base_variant(blast_variant)) %>%
+        inner_join(base_group, by = "variant_base") %>%
+        distinct(group_id, variant = counted_variant)
+    ) %>%
+    distinct() %>%
+    mutate(year = extract_variant_year_outbreak(variant))
+
+  # Batch count: sequences counted under their proposed variant name
+  batch_variant_counts <- seq_proposed %>%
+    filter(!is.na(counted_variant)) %>%
+    count(counted_variant, name = "n_batch") %>%
+    rename(variant = counted_variant)
+
+  # Database count: number of database sequences carrying this variant
+  db_variant_counts <- if (nrow(meta) > 0 && "variant" %in% names(meta)) {
     meta %>%
-      filter(
-        !is.na(variant),
-        variant != ""
+      filter(!is.na(variant), variant != "") %>%
+      count(variant, name = "n_db")
+  } else {
+    tibble(variant = character(), n_db = integer())
+  }
+
+  # Get sample dates for each variant from database metadata
+  db_variant_dates <- if (nrow(meta) > 0 && "variant" %in% names(meta) && "sample_date" %in% names(meta)) {
+    meta %>%
+      filter(!is.na(variant), variant != "", !is.na(sample_date), sample_date != "") %>%
+      select(variant, sample_date) %>%
+      distinct() %>%
+      group_by(variant) %>%
+      summarise(
+        oldest_date = min(sample_date, na.rm = TRUE),
+        newest_date = max(sample_date, na.rm = TRUE),
+        .groups = "drop"
       ) %>%
       mutate(
-        id_norm = outbreak_norm_id(id)
+        sample_date_range = if_else(
+          oldest_date == newest_date,
+          oldest_date,
+          paste0(oldest_date, " to ", newest_date)
+        )
       ) %>%
-      select(
-        id_norm,
-        variant
-      ),
-    by = c("sseqid_norm" = "id_norm")
-  ) %>%
-  select(
-    seqName = qseqid,
-    variant
-  ) %>%
-  filter(
-    !is.na(variant)
-  ) %>%
-  mutate(
-    base_variant = extract_base_variant(variant)
-  )
+      select(variant, sample_date_range)
+  } else {
+    tibble(variant = character(), sample_date_range = character())
+  }
 
-
-# Group by base variant
-batch_variant_summary <- batch_variants %>%
-  group_by(base_variant) %>%
-  summarise(
-    n_batch = n(),
-    batch_seqs = paste(
-      sort(unique(seqName)),
-      collapse = ", "
-    ),
-    .groups = "drop"
-  )
-
-# Add database counts for context
-if (nrow(meta) > 0 && "variant" %in% names(meta)) {
-  
-  db_variant_summary <- meta %>%
-    filter(
-      !is.na(variant),
-      variant != ""
-    ) %>%
+  outbreak_candidates <- group_variants %>%
+    left_join(batch_variant_counts, by = "variant") %>%
+    left_join(db_variant_counts, by = "variant") %>%
+    left_join(db_variant_dates, by = "variant") %>%
     mutate(
-      base_variant = extract_base_variant(variant)
+      n_batch = as.integer(replace_na(n_batch, 0L)),
+      n_db = as.integer(replace_na(n_db, 0L)),
+      n_total = n_batch + n_db,
+      sample_date_range = replace_na(sample_date_range, "—")
     ) %>%
-    group_by(base_variant) %>%
+    arrange(group_id, variant) %>%
+    group_by(group_id) %>%
+    mutate(variant_group = paste(unique(variant), collapse = " / ")) %>%
+    ungroup() %>%
+    select(group_id, variant_group, variant, year, n_batch, n_db, n_total, sample_date_range)
+  
+  # Filter for outbreak candidates (>=2 total across all years)
+  outbreak_summary_by_group <- outbreak_candidates %>%
+    group_by(group_id, variant_group) %>%
     summarise(
-      n_db = n(),
+      n_total_group = sum(n_total),
       .groups = "drop"
     )
-
-  outbreak_candidates <- batch_variant_summary %>%
+  
+  outbreak_candidates <- outbreak_candidates %>%
     left_join(
-      db_variant_summary,
-      by = "base_variant"
-    ) %>%
-    mutate(
-      n_db = replace_na(n_db, 0L),
-      n_total = n_batch + n_db
-    ) %>%
-    select(
-      base_variant,
-      n_batch,
-      n_db,
-      n_total,
-      batch_seqs
+      outbreak_summary_by_group,
+      by = c("group_id", "variant_group")
     )
 } else {
-  outbreak_candidates <- batch_variant_summary %>%
-    mutate(
-      n_db = 0L,
-      n_total = n_batch
-    ) %>%
-    select(
-      base_variant,
-      n_batch,
-      n_db,
-      n_total,
-      batch_seqs
-    )
+  outbreak_candidates <- tibble(
+    group_id = integer(),
+    variant_group = character(),
+    variant = character(),
+    year = integer(),
+    n_batch = integer(),
+    n_db = integer(),
+    n_total = integer(),
+    sample_date_range = character(),
+    n_total_group = integer()
+  )
 }
 
 if (nrow(outbreak_candidates) == 0) {
   cat("*No variants detected in batch.*\n\n")
 } else {
-  # Table shows variants with >=2 total sequences; trees require >=3 (built in build_outbreak_trees.R)
+  # Filter for outbreak candidates (>=2 total across all years in group)
   outbreak_candidates_table <- outbreak_candidates %>%
-    filter(n_total >= 2)
+    filter(n_total_group >= 2)
+  
   outbreak_candidates_display <- outbreak_candidates %>%
-    filter(n_total >= 3)
+    filter(n_total_group >= 3)
   
   if (nrow(outbreak_candidates_table) == 0) {
     cat("*No variants with ≥2 total sequences detected in batch.*\n\n")
   } else {
-    cat(sprintf("**Variants in batch:** %d variant group(s) with ≥2 total sequences\n\n", nrow(outbreak_candidates_table)))
+    # Group by variant_group to get summary
+    unique_groups <- outbreak_candidates_table %>%
+      select(group_id, variant_group, n_total_group) %>%
+      distinct()
     
-    # Summary table 
-    cat("**Variant overview (≥2 sequences):**\n\n")
-    outbreak_display <- outbreak_candidates_table %>%
-      select(
-        `Variant` = base_variant,
-        `Batch (n)` = n_batch,
-        `Database (n)` = n_db,
-        `Total` = n_total
+    cat(sprintf("**Variants in batch:** %d variant group(s) with ≥2 total sequences\n\n", nrow(unique_groups)))
+    
+    # Create detailed table showing each variant with year breakdown
+    cat("**Variant overview (≥2 sequences) — showing all years for each variant group:**\n\n")
+    
+    for (gid in unique_groups$group_id) {
+      g <- outbreak_candidates_table %>%
+        filter(group_id == gid) %>%
+        arrange(variant)
+      
+      group_tbl <- g %>%
+        transmute(
+          `Variant` = variant,
+          `Sample date (oldest/newest)` = sample_date_range,
+          `Batch (n)` = n_batch,
+          `Database (n)` = n_db,
+          `Total` = n_total
+        )
+      group_tbl <- bind_rows(
+        group_tbl,
+        tibble(
+          `Variant` = "Group total",
+          `Sample date (oldest/newest)` = "",
+          `Batch (n)` = sum(g$n_batch),
+          `Database (n)` = sum(g$n_db),
+          `Total` = sum(g$n_total)
+        )
       )
-    
-    cat(outbreak_display %>%
-          kbl() %>%
-          kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
-        as.character())
-    cat("\n\n")
+      
+      cat(group_tbl %>%
+            kbl() %>%
+            kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
+            row_spec(nrow(group_tbl), bold = TRUE) %>%
+            as.character())
+      cat("\n\n")
+    }
   }
   
   # Create tabset structure for outbreak trees (display pre-generated PNG images)
@@ -2145,52 +2332,95 @@ if (nrow(outbreak_candidates) == 0) {
     png_files <- list.files(outbreak_trees_dir, pattern = "\\.png$", full.names = TRUE)
     png_files <- sort(png_files)  # Sort alphabetically
     
+    tree_index_path <- file.path(outbreak_trees_dir, "tree_index.tsv")
+    tree_index <- if (file.exists(tree_index_path)) {
+      read_tsv(tree_index_path, col_names = c("tree_label", "group_key"),
+               col_types = "cc", show_col_types = FALSE)
+    } else {
+      tibble(tree_label = character(), group_key = character())
+    }
+    
     if (length(png_files) > 0) {
-      # Create tabs for each PNG file (only variants with >=3 sequences)
+      # Create tabs for each PNG file (only variant groups with >=3 sequences total)
       for (png_path in png_files) {
         variant_name <- sub("\\.png$", "", basename(png_path))
         
-        # Get batch and DB sequence counts for this variant (from filtered candidates)
-        variant_row <- outbreak_candidates_display %>%
-          filter(base_variant == variant_name)
+        # PNG name = group stems + new proposed names; tree_index.tsv maps it to the group key
+        gkey <- if (nrow(tree_index) > 0 && variant_name %in% tree_index$tree_label) {
+          tree_index$group_key[tree_index$tree_label == variant_name][1]
+        } else {
+          variant_name
+        }
+        gid <- group_key_map$group_id[group_key_map$group_key == gkey]
+        if (length(gid) == 0) next
         
-        # Skip if not in display list (should have >=3 sequences)
-        if (nrow(variant_row) == 0) next
+        # Get all variants in this group and their counts
+        variant_group_data <- outbreak_candidates_display %>%
+          filter(group_id == gid[1]) %>%
+          arrange(variant, desc(year))
         
-        n_batch_seqs <- variant_row$n_batch[1]
-        n_db_seqs <- variant_row$n_db[1]
+        # Skip if not in display list (should have >=3 sequences total)
+        if (nrow(variant_group_data) == 0) next
+        
+        n_batch_seqs <- sum(variant_group_data$n_batch)
+        n_db_seqs <- sum(variant_group_data$n_db)
+        n_total_seqs <- n_batch_seqs + n_db_seqs
         
         # Create tab header
         cat(sprintf("\n### %s\n\n", variant_name))
-        cat(sprintf("**Batch samples:** %d | **Database samples:** %d | **Total:** %d\n\n",
-                    n_batch_seqs, n_db_seqs, n_batch_seqs + n_db_seqs))
+        cat(sprintf("**Total:** %d batch + %d database = %d sequences\n\n",
+                    n_batch_seqs, n_db_seqs, n_total_seqs))
+        
+        # Show breakdown by variant and year
+        variant_breakdown <- variant_group_data %>%
+          select(
+            `Variant` = variant,
+            `Sample date (oldest/newest)` = sample_date_range,
+            `Batch (n)` = n_batch,
+            `Database (n)` = n_db,
+            `Total` = n_total
+          ) %>%
+          arrange(`Variant`)
+        
+        if (nrow(variant_breakdown) > 1) {
+          cat("**Breakdown by variant and year:**\n\n")
+          cat(variant_breakdown %>%
+                kbl() %>%
+                kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = TRUE) %>%
+              as.character())
+          cat("\n\n")
+        }
         
         # Embed pre-generated PNG image
         .embed_tree(
   png_path,
   alt = paste(
-    "Outbreak phylogenetic tree for variant",
+    "Outbreak phylogenetic tree for variant group",
     variant_name
   )
 )
         cat("\n\n")
         
-        # Show database sequences with this variant
-db_seqs_for_variant <- meta %>%
-  filter(!is.na(variant), variant != "") %>%
-  mutate(
-    base_var = extract_base_variant(variant)
-  ) %>%
-  filter(base_var == variant_name) %>%
-  select(
-    id,
-    variant,
-    genotype,
-    any_of("date")
-  )
+        # Show database sequences with any variant in this group
+        # Get all variants that belong to this group
+        variants_in_group <- variant_group_data %>%
+          pull(variant) %>%
+          unique()
+        
+        db_seqs_for_variant <- meta %>%
+          filter(!is.na(variant), variant != "") %>%
+          filter(variant %in% variants_in_group) %>%
+          select(
+            id,
+            variant,
+            genotype,
+            any_of("date"),
+            any_of("sample_date")
+          ) %>%
+          arrange(variant, id)
 
 if (nrow(db_seqs_for_variant) > 0) {
-  cat("**Database sequences with this variant:**\n\n")
+  cat("**Database sequences in this variant group:**\n\n")
 
   db_display <- db_seqs_for_variant %>%
     rename(
@@ -2202,6 +2432,11 @@ if (nrow(db_seqs_for_variant) > 0) {
   if ("date" %in% names(db_display)) {
     db_display <- db_display %>%
       rename(Date = date)
+  }
+  
+  if ("sample_date" %in% names(db_display)) {
+    db_display <- db_display %>%
+      rename(`Sample date` = sample_date)
   }
 
   cat(
@@ -2984,6 +3219,7 @@ summary_tsv_output <- summary_tbl %>%
     Genotype_BLAST = blast_genotype,
     Clade_agree_blast = clade_agree_blast,
     BLAST_top_hit = sseqid,
+    BLAST_hit_sample_date = blast_hit_sample_date,
     BLAST_variant = blast_variant,
     BLAST_SNPs = blast_mismatch,
     DB_variant_count = db_variant_count,

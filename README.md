@@ -94,13 +94,14 @@ to missing scripts.
 | `scripts/run_all_analyses.sh` | Runs BLAST, Nextclade, phylogenetic analysis, and report generation. |
 | `scripts/generate_samplesheet.R` | Creates a samplesheet from Sanger FASTA filenames. |
 | `scripts/prepare_input_fasta.R` | Collects sample sequences into a batch multi-FASTA. |
-| `scripts/prepare_metadata.R` | Combines request and HAV metadata into a TSV. |
+| `scripts/prepare_metadata.R` | Combines request and HAV metadata into `metadata.tsv` (id, genotype, variant, sample_date). `sample_date` comes from `SAMPLED_DATE` in `HAV_lw_uttrekk.tsv`; for `Requests.xlsx` only `Year` is available and is used instead. |
 | `scripts/make_blast_db.sh` | Prepares and builds the local nucleotide BLAST database. |
 | `scripts/blast_batch.sh` | Searches batch sequences against the local BLAST database. |
 | `scripts/build_per_seq_trees.sh` | Selects nearby sequences, aligns them, and builds per-sequence IQ-TREE trees. |
 | `scripts/build_batch_analysis.sh` | Builds batch phylogenies and SNP-distance results. |
+| `scripts/propose_variant_names.R` | Proposes variant names for batch sequences; writes `proposed_variants.tsv` (genotype, BLAST hit and its sample date, SNPs, proposed variant, notes). |
 | `scripts/build_outbreak_trees.R` | Generates outbreak/variant trees using batch and database sequences. |
-| `scripts/batch_report.Rmd` | Renders the HTML report and tabular summaries. |
+| `scripts/batch_report.Rmd` | Renders the HTML report (including sample dates for BLAST hits and variants) and `summary.tsv`. |
 | `scripts/R-database.R` | Utility for importing, querying, and exporting external sequences in SQLite. |
 
 ## Runtime data

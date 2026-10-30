@@ -26,7 +26,8 @@
 #   3. Per-sequence trees — builds IQ-TREE phylogenetic trees for each query
 #                  (using nearest neighbors from BLAST and NextClade)
 #   4. Batch analysis — batch phylogenetic trees and SNP matrices
-#   5. Outbreak trees — generates phylogenetic trees combining batch + database sequences
+#   5. Variant names + outbreak trees — propose_variant_names.R proposes variant names,
+#                  then trees combine batch + database sequences
 #   6. Batch report — generates interactive HTML report with visualizations
 #
 # Writes to <out_base>/:
@@ -36,7 +37,9 @@
 #   trees/<seqName>/*  (per-sequence tree artifacts)
 #   trees/batch/*  (batch tree artifacts)
 #   snp_matrices/batch_snp_distances.tsv
+#   proposed_variants.tsv  (variant naming table: genotype, BLAST hit + sample date, SNPs, proposed variant, notes)
 #   outbreak_trees/  (PNG images of outbreak lineage trees)
+#   summary.tsv  (per-sequence summary, written by the report)
 #   batch_report.html  (interactive HTML report)
 #
 # Prerequisites:
@@ -216,6 +219,17 @@ printf 'IQTREE=[%s]\n' "$IQTREE_BIN"
 [[ -x "$MAFFT_BIN" ]] && echo "MAFFT OK" || echo "MAFFT NOT EXECUTABLE"
 [[ -x "$IQTREE_BIN" ]] && echo "IQ-TREE OK" || echo "IQ-TREE NOT EXECUTABLE"
 
+
+# Proposed variant names (shared by outbreak trees and the report)
+conda run -n R_shared Rscript \
+  "$HAV_SEQ_REPO/scripts/propose_variant_names.R" \
+  "$OUT_BASE" \
+  "$DATASET_DATE" \
+  "$DATASET_DIR" \
+  "$BATCH_FA" || {
+    echo "WARNING: Variant name proposal failed"
+    echo "         Trees and report will lack proposed variant names"
+  }
 
 conda run -n R_shared Rscript \
   "$HAV_SEQ_REPO/scripts/build_outbreak_trees.R" \

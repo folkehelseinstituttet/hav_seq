@@ -241,11 +241,6 @@ conda run -n R_shared Rscript "$HAV_SEQ_REPO/scripts/prepare_metadata.R" "$TMP_D
 METADATA="$TMP_DIR/metadata.tsv"
 
 
-
-
-
-
-
 # TODO(WGS): Implement run_pipeline.sh and consensus collection before
 # restoring the WGS path. WGS mode is rejected during validation above.
 

@@ -29,21 +29,36 @@ metadata_requests <- requests %>%
   transmute(
     id = SAMPLE_NUMBER,
     genotype = str_extract(Resultat, "(?<=HAV GENOTYPE\\s)\\S+"),
-    variant = Outbreak_variant
+    variant = Outbreak_variant,
+    sample_date = Year
   ) %>%
   mutate(
-    genotype = replace_na(genotype, "")
+    genotype = replace_na(genotype, ""),
+    sample_date = replace_na(sample_date, "")
   )
 
 # Data fra TSV-filen
+# Sjekk om SAMPLED_DATE kolonne finnes
+has_sampled_date <- "SAMPLED_DATE" %in% names(hav)
+
 metadata_hav <- hav %>%
   transmute(
     id = paste(SAMPLE_NUMBER, SekvensID, sep = "_"),
     genotype = str_extract(Resultat, "(?<=HAV GENOTYPE\\s)\\S+"),
-    variant = Outbreak_variant
+    variant = Outbreak_variant,
+    sample_date = if (has_sampled_date) {
+      if_else(
+        !is.na(SAMPLED_DATE) & SAMPLED_DATE != "",
+        SAMPLED_DATE,
+        ""
+      )
+    } else {
+      ""
+    }
   ) %>%
   mutate(
-    genotype = replace_na(genotype, "")
+    genotype = replace_na(genotype, ""),
+    sample_date = replace_na(sample_date, "")
   )
 
 # Slå sammen

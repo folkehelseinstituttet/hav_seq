@@ -229,23 +229,29 @@ extract_base_variant <- function(variant) {
   sub("[a-z]$", "", variant, perl = TRUE)
 }
 
-# Assign each batch sequence to the base variant of its best BLAST match
-batch_variants <- blast_results %>%
+# Assign each batch sequence to a group. Sequences are linked when they share a base
+# variant (V6 ~ V6a ~ V6b) through their best BLAST hit or any hit within <=3 SNPs,
+# directly or transitively. This mirrors the grouping in batch_report.Rmd.
+batch_hits <- blast_results %>%
   arrange(qseqid, mismatch, desc(bitscore)) %>%
   mutate(sseqid_norm = norm_id(sseqid)) %>%
-  group_by(qseqid) %>%
-  slice_head(n = 1) %>%
-  ungroup() %>%
   left_join(
     meta %>%
       mutate(id_norm = norm_id(id)) %>%
       select(id_norm, variant),
     by = c("sseqid_norm" = "id_norm")
   ) %>%
-  select(seqName = qseqid, subject_id = sseqid, variant) %>%
-  filter(!is.na(variant)) %>%
-  # Group by base variant (remove sub-variant suffixes)
-  mutate(base_variant = extract_base_variant(variant))
+  filter(!is.na(variant), nzchar(trimws(variant))) %>%
+  group_by(qseqid) %>%
+  filter(row_number() == 1 | mismatch <= 3) %>%
+  mutate(is_best = row_number() == 1) %>%
+  ungroup() %>%
+  mutate(base_variant = extract_base_variant(variant)) %>%
+  filter(!is.na(base_variant))
+
+batch_variants <- batch_hits %>%
+  filter(is_best) %>%
+  select(seqName = qseqid, subject_id = sseqid, variant, base_variant)
 
 n_assigned <- nrow(batch_variants)
 log_msg("✓ Assigned %d batch sequences to variants via BLAST", n_assigned)
@@ -255,17 +261,43 @@ if (n_assigned == 0) {
   quit(save = "no", status = 0)
 }
 
-batch_variants_clean <- batch_variants %>%
-  filter(!is.na(base_variant))
+# Connected components of base variants (union via shared batch sequences)
+seq_base <- batch_hits %>% distinct(seqName = qseqid, base_variant)
+bases_all <- sort(unique(seq_base$base_variant))
+comp <- setNames(seq_along(bases_all), bases_all)
+repeat {
+  seq_min <- tapply(comp[seq_base$base_variant], seq_base$seqName, min)
+  cand <- as.integer(seq_min[seq_base$seqName])
+  upd <- tapply(cand, seq_base$base_variant, min)
+  new_comp <- comp
+  new_comp[names(upd)] <- pmin(comp[names(upd)], as.integer(upd))
+  if (all(new_comp == comp)) break
+  comp <- new_comp
+}
 
-unique_variant <- batch_variants_clean %>%
-  distinct(base_variant) %>%
-  pull(base_variant) %>%
-  sort()
+# group_key = sorted base variants joined by "_" (also the PNG/FASTA file name)
+group_bases <- split(names(comp), unname(comp))
+group_keys <- vapply(group_bases, function(b) paste(sort(b), collapse = "_"), character(1))
+group_bases <- setNames(lapply(group_bases, sort), group_keys)
+base_to_key <- setNames(rep(group_keys, lengths(group_bases)), unlist(group_bases))
+
+batch_variants_clean <- batch_variants %>%
+  mutate(group_key = unname(base_to_key[base_variant]))
+
+unique_variant <- sort(unique(batch_variants_clean$group_key))
 
 n_unique_variants <- length(unique_variant)
-log_msg("✓ Found %d unique base variants: %s", n_unique_variants, 
+log_msg("✓ Found %d variant group(s): %s", n_unique_variants,
         paste(unique_variant, collapse = ", "))
+
+# Proposed variant names (from propose_variant_names.R), used in tree labels
+proposed_file <- file.path(output_dir, "proposed_variants.tsv")
+proposed_names <- if (file.exists(proposed_file)) {
+  read_tsv(proposed_file, col_types = cols(.default = col_character()), show_col_types = FALSE)
+} else {
+  log_msg("⚠ proposed_variants.tsv not found; labels show nearest-hit variant")
+  tibble(qseqid = character(), proposed_variant = character())
+}
 
 if (n_unique_variants == 0) {
   log_msg("WARNING: No variants found. Skipping tree generation.")
@@ -360,23 +392,42 @@ log_msg("✓ MAFFT executable validated")
 log_msg("✓ IQ-TREE executable validated")
 
 n_trees_generated <- 0
-
+unlink(file.path(outbreak_trees_dir, "tree_index.tsv"))
 for (outbreak_variant in unique_variant) {
   log_msg("\nProcessing variant: %s", outbreak_variant)
   
   # Get batch sequences with this base variant
   batch_seqs_list <- batch_variants_clean %>%
-    filter(base_variant == outbreak_variant) %>%
+    filter(group_key == outbreak_variant) %>%
     pull(seqName)
   
   n_batch <- length(batch_seqs_list)
   log_msg("  Batch sequences: %d", n_batch)
+  batch_hit_variant <- setNames(batch_variants_clean$variant, batch_variants_clean$seqName)
+  batch_label_variant <- batch_hit_variant
+  if (nrow(proposed_names) > 0) {
+    prop <- setNames(proposed_names$proposed_variant, proposed_names$qseqid)
+    batch_label_variant <- ifelse(
+      !is.na(prop[names(batch_hit_variant)]) & nzchar(prop[names(batch_hit_variant)]),
+      prop[names(batch_hit_variant)],
+      batch_hit_variant
+    )
+    names(batch_label_variant) <- names(batch_hit_variant)
+  }
+
+  # Tree/file name: group stems plus any NEW proposed variant names of the batch
+  # sequences (names that do not exist in the database yet)
+  new_names <- unique(unname(batch_label_variant[batch_seqs_list]))
+  new_names <- new_names[!is.na(new_names) & nzchar(new_names) &
+                           !(new_names %in% meta$variant)]
+  tree_label <- paste(sort(unique(c(group_bases[[outbreak_variant]], new_names))), collapse = "_")
+  log_msg("  Tree name: %s", tree_label)
   
-  # Get database sequences with this base variant
-  # Match both the variant and any sub-variants (V6, V6a, V6b all match NOR-2024-V6)
+  # Get database sequences with any base variant in this group
+  # (V6, V6a, V6b all match NOR-2024-V6; linked bases are included too)
   db_seqs_for_variant <- meta %>%
     mutate(base_var = extract_base_variant(variant)) %>%
-    filter(base_var == outbreak_variant) %>%
+    filter(base_var %in% group_bases[[outbreak_variant]]) %>%
     select(id, variant, genotype)
   
   n_db <- nrow(db_seqs_for_variant)
@@ -441,7 +492,7 @@ for (outbreak_variant in unique_variant) {
     for (other_var in outgroup_variants) {
       other_id <- meta %>%
         mutate(base_var = extract_base_variant(variant)) %>%
-        filter(base_var == other_var) %>%
+        filter(base_var %in% group_bases[[other_var]]) %>%
         slice(1) %>%
         pull(id)
       
@@ -467,7 +518,7 @@ for (outbreak_variant in unique_variant) {
   
   # Generate tree
   tryCatch({
-    variant_slug <- gsub("[^A-Za-z0-9.-]", "_", outbreak_variant)
+    variant_slug <- gsub("[^A-Za-z0-9.-]", "_", tree_label)
     
     # Write raw (unaligned) sequences, then align them together with MAFFT
     raw_file_tmp <- file.path(outbreak_trees_dir, sprintf("raw_%s.fasta", variant_slug))
@@ -641,9 +692,9 @@ if (
       mutate(
         # Display label: ID [Variant|Genotype]
         display_label = case_when(
-          is_batch ~ sprintf("%s [%s]", label, outbreak_variant),
+          is_batch ~ sprintf("%s [%s]", base_id, coalesce(unname(batch_label_variant[base_id]), "")),
           is_outgroup ~ sprintf("%s [OUTGROUP]", base_id),
-          !is.na(variant) ~ sprintf("%s [%s|%s]", base_id, variant, replace_na(genotype, "Unknown")),
+          !is.na(variant) ~ sprintf("%s [%s %s]", base_id, variant, replace_na(genotype, "Unknown")),
           TRUE ~ sprintf("%s [%s]", base_id, replace_na(genotype, "Unknown"))
         )
       )
@@ -669,7 +720,8 @@ if (
         ) +
         hexpand(.8) +
         labs(
-          title = sprintf("Variant %s — Phylogenetic outbreak tree", outbreak_variant),
+          title = sprintf("Variant group %s — Phylogenetic outbreak tree",
+                          gsub("_", " / ", tree_label, fixed = TRUE)),
           subtitle = sprintf("Batch (n=%d) vs database (n=%d) + outgroups, total=%d",
                             n_batch, nrow(db_seqs_for_variant), n_total)
         )
@@ -685,8 +737,11 @@ if (
     
     # Save PNG with error handling
     tryCatch({
-      png_file <- file.path(outbreak_trees_dir, sprintf("%s.png", outbreak_variant))
+      png_file <- file.path(outbreak_trees_dir, sprintf("%s.png", tree_label))
       ggsave(png_file, plot = p, width = 12, height = 8, dpi = 150)
+      # Index so the report can map tree file -> variant group
+      write_tsv(tibble(tree_label = tree_label, group_key = outbreak_variant),
+                file.path(outbreak_trees_dir, "tree_index.tsv"), append = TRUE)
       log_msg("  ✓ Saved tree PNG: %s", basename(png_file))
       n_trees_generated <- n_trees_generated + 1
     }, error = function(e) {
