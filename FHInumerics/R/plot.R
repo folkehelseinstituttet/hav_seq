@@ -79,12 +79,13 @@ tip_at <- function(tree_data, hover) {
 }
 
 # What the hover box shows for one tip: a named character vector.
-# Database samples: all their metadata. Queries: the closest sequence(s) in the tree.
+# Database samples: all their metadata. Queries: the closest sequence(s) in the tree (within
+# sets, 0013: of all the others, queries included).
 tip_details <- function(res, label) {
   m <- res$tip_meta[res$tip_meta$id == label, , drop = FALSE]
   if (!nrow(m)) return(c(Sample = label))
   if (isTRUE(m$is_query[1])) {
-    snp <- res$snp[label, setdiff(colnames(res$snp), res$queries), drop = TRUE]
+    snp <- res$snp[label, setdiff(colnames(res$snp), if (isTRUE(res$within)) label else res$queries), drop = TRUE]
     if (!length(snp)) return(c(Query = label))
     closest <- names(snp)[snp == min(snp)]
     more <- if (length(closest) > 3) sprintf(" and %d more", length(closest) - 3) else ""

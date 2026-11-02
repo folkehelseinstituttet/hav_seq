@@ -5,6 +5,85 @@ run's `run_manifest.yaml`. Newest first.
 
 ## Unreleased
 
+- **Runs on sets** (Outbreak detection, a new *Compare* choice at the top):
+  *New sequences with sets only* searches the new sequences only against one or more
+  sets instead of a database (the sets' sequences are turned to one orientation first;
+  the search index is kept per set content in `cache/set_<checksum>/`); *The sequences of
+  sets with each other* compares the sequences of one or more sets (or rows chosen on the
+  Sets page, at most 300) without a search: the set's alignment, or aligned in the run as
+  *Align the set* does, trimmed to the columns every sequence covers or to a region,
+  then SNP table and tree. Several sets are taken together (a sample in both counts once;
+  new column `in_set`). Sets need not be saved: every run on sets keeps a copy of the
+  set(s) used in `set/` in its run folder. Database runs give the same results as before.
+- Alignment page: with a set shown, drag along the column numbers to mark a region and
+  press *Compare the set over columns ...*.
+- Sets page: *Compare the sequences with each other*, *Search new sequences against this
+  set*, and *Search a database with these sequences* (was *Use in Outbreak detection*).
+- Comparisons within sets: point at any number of the SNP table to see which positions
+  differ (made when pointed at); sequences left out or limiting the region are named
+  above the tabs; with more than 100 sequences and bootstrap on, the window asks first.
+- `run_manifest.yaml` has a `mode` (`database`, `set_database`, `within_set`); runs on
+  sets record the sets (checksums), the alignment used and the region.
+- Command line: `--set-db <set folder>` and `--within-set <set folder> [--region FROM-TO]`
+  (each can be given several times).
+- The paste box starts with an example (a public demo sequence) so a first run can be
+  tried at once.
+- Fixed: notes on Outbreak detection could stay greyed out after switching page and
+  mode at once.
+
+- New page **Sets**: collect sequences from databases (one or more), runs, the Alignment
+  page and FASTA files into a set, with *Add to set* buttons on the Database viewer
+  (chosen samples), Outbreak detection (SNP table, tree, the whole result) and Alignment
+  page (the rows shown). The same database sample is kept once; name clashes are renamed
+  (`<name>_query`, `<name>_<database>`, `<name>_2`) and the message says so. A table of
+  the set's sequences with their source and metadata; remove rows; download the
+  sequences (FASTA) or the table (CSV). Sets are kept in the window until *Save*, which
+  writes a folder (`sequences.fasta`, `metadata.tsv`, `set.yaml` with sources, database
+  checksums and the set's checksum, `aligned.fasta`), by default in
+  `<results folder>/sets/`; saved sets are listed again at the next start. Saving over
+  another saved set asks first; *Delete* removes only the set's own files. The browser
+  asks before the tab is closed while a set is not saved.
+- **Aligning a set** (and an unaligned FASTA file in the Alignment page): sequences that
+  are reverse complements are turned first (DECIPHER `OrientNucleotides` against six HAV
+  genomes, one per subgenotype, in `data/orientation_panel.fasta`) and named in a
+  message; then DECIPHER `AlignSeqs`, as in runs. It runs in the background with a
+  progress box and *Cancel*, and the window stays usable; above 500 sequences it asks
+  first. The alignment is saved with the set. Removing sequences keeps it; sequences added
+  later are shown as "out of date" until the set is aligned again. A set made from run
+  results or an aligned file starts with that alignment.
+- Alignment page: new sources *A set* and *A FASTA file (aligned or not)*; *Add the shown
+  rows to the set*.
+- **CSV downloads** (Database viewer, sets) are now for Excel with Norwegian settings:
+  `;` between columns, decimal comma, UTF-8 with a byte order mark. Scripts reading the
+  old comma-separated files must change (e.g. R `read.csv2`).
+- New optional database setting `short_name` (used in set member names).
+- **Sets as Outbreak detection input:** "...or use a set" under the FASTA file button, or
+  *Use in Outbreak detection* on the Sets page (the rows chosen there, or the whole set;
+  at most 50). Samples in the set from the searched database leave out their own entry
+  from their closest matches; other sequences do not. `run_manifest.yaml` records the set
+  (`input`) and, as `exclude_self`, which entry each sample left out. Command line:
+  `--query-set <set folder>`. Results of pasted text and files are unchanged.
+
+- New page **Alignment**: the aligned sequences, each compared with an anchor (the
+  majority consensus by default, or any sequence: right-click "Use as anchor"). Only
+  differences are drawn, coloured by the SNP rule: SNPs, ambiguity codes that cannot
+  match (counted) or fit (not counted), indels, no data (N and missing ends), and grey
+  where the anchor has no base. An overview chart of how many sequences differ per
+  column; mouse wheel zooms, drag moves, double-click shows the whole alignment; sort
+  rows by tree, SNPs, name or date; go to a position; previous/next difference; a box
+  with positions, metadata and per-sequence totals (SNPs, indel events, ambiguity codes,
+  % no data) when pointing at a cell; "Variable columns only", "Hide columns that are a
+  gap in the anchor", consensus settings (ties as ambiguity code or N, optional
+  threshold). Downloads: aligned FASTA (whole or on screen), PDF, PNG and an interactive
+  page (HTML) that opens without FHInumerics.
+- Run results open in the Alignment page untrimmed, with the compared region marked.
+  Choose sequences for it by clicking names in the SNP table, dragging over the tree, a
+  query and its N closest (ties included), or a click on a number in the SNP table (that
+  pair, at its first SNP). Earlier run folders and aligned FASTA files can be opened too.
+- SNP distances: all rows are shown (before, at most 100).
+- Run folders get `alignment_untrimmed.fasta`; `run_manifest.yaml` results get
+  `compared_region` and `dropped`. SNPs, trees and other results are unchanged.
+
 - **SNP counting takes ambiguity codes into account** (phangorn `dist.hamming` instead of
   ape `dist.dna`): an ambiguity code counts as a SNP only when it cannot match the other
   base (K = G/T vs A counts; M = A/C vs A does not). Before, ambiguity codes were skipped

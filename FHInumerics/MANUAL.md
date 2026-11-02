@@ -25,17 +25,42 @@ code (`R/compare.R`), so they give identical results for the same input and sett
 
 ## 2. Using the window
 
-The menu at the top left switches between two pages:
+The menu at the top left switches between four pages:
 
-- **Outbreak detection**: compare new sequences to a database (sections 2.1-2.2).
+- **Outbreak detection**: compare new sequences to a database or to sets, or the
+  sequences of sets with each other (sections 2.1-2.2).
 - **Database viewer**: browse, filter and chart a database, and pick samples from it
   (section 2.3).
+- **Alignment**: see the aligned sequences, coloured where they differ (section 2.4).
+- **Sets**: collect sequences from several places (databases, runs, files) to view,
+  align, save and export them together (section 2.5).
 
 ### 2.1 Outbreak detection: input and settings
 
+- **Compare** (at the top) chooses what is compared; the inputs below change with it:
+  - *New sequences with a database* (default): the queries are searched against a
+    database from `config.yaml`, as described in this section.
+  - *New sequences with sets only*: the queries are searched only against the sequences of
+    one or more sets (2.5), chosen under **Search only these sets**, instead of a database.
+    Several sets are taken together; a sample in more than one counts once. Everything
+    else is as with a database (closest sequences, tree, SNP table, Closest matches). See
+    3.7.
+  - *The sequences of sets with each other*: no new sequences and no search. The
+    sequences of the sets chosen under **Sets to compare** are aligned and compared with
+    each other (tree and SNP table). See below and 3.7.
 - **Paste sequence(s) in FASTA format**, or **choose a FASTA file** (`.fa`, `.fasta`,
   `.fas`, `.fna`, `.txt`). A chosen file is used instead of pasted text. At most 50
-  sequences per run.
+  sequences per run. When FHInumerics starts, the box holds an example (a public demo
+  sequence: KY782331.1 with 3 changes), so you can press *Run comparison* to try it;
+  replace it with your own sequences.
+- **...or use a set** (2.5): its sequences are the queries, instead of the pasted text and
+  the file (choosing a file again, or sending samples from the Database viewer, switches
+  back). The note under it says how many sequences are used. Samples in the set that come
+  from the database being searched leave out their own entry from their closest matches
+  (as samples sent from the Database viewer do); queries, file sequences and samples from
+  other databases do not. The run's `run_manifest.yaml` records the set (`input`: name,
+  checksum, number of sequences, folder) and, under `exclude_self`, which entry each
+  sample left out.
 - **Database**: the databases listed in `config.yaml`.
 - **Closest sequences per query** (5-50, default 20): how many database sequences per
   query go into the alignment and tree.
@@ -52,6 +77,29 @@ The menu at the top left switches between two pages:
   under it. As long as that text is not changed, each sample's own database entry is
   left out of its closest matches (otherwise every sample would find itself, 0 SNPs).
   This is recorded as `exclude_self: true` in `run_manifest.yaml`.
+- With *New sequences with sets only* and queries from a set (*...or use a set*), a query
+  that is the same sample as a sequence of the sets searched (same database and ID, or a
+  query or file sequence with the same name and sequence) leaves that one out; the note
+  under the list says how many.
+
+**The sequences of sets with each other:**
+
+- **Sets to compare**: one or more sets. *Compare the sequences with each other* on the
+  Sets page fills it in (with only the rows chosen there, if any). At most 300 sequences.
+- The line under it says how many sequences are compared and which alignment is used: the
+  set's own alignment (as on the Alignment page) when it has all of them. Otherwise they are
+  aligned first when you press *Run comparison* (or press **Align the set** to do it now in
+  the background); one set then keeps that alignment. Several sets are always aligned
+  together in the run.
+- **Region**: by default the columns every sequence covers. To compare another part of
+  the genome, show the set on the Alignment page, drag along the column numbers above the
+  alignment, and press *Compare the set over columns ...* (2.4). The line then says
+  *Compared over columns ...*; *Use the columns every sequence covers* goes back.
+- *Closest sequences per query*, *Minimum % of the query* and *Alignment* do not apply and
+  are hidden. With bootstrap on and more than 100 sequences, you are asked first: the tree
+  with bootstrap can take minutes (about 1.5 minutes for 280 complete genomes on a fast
+  computer), and the window waits meanwhile; without bootstrap it takes seconds and the
+  SNP table is the same.
 
 ### 2.2 Outbreak detection: results
 
@@ -70,6 +118,8 @@ is marked "(no result)" and its tabs say why.
     Missing values are shown as `?`.
   - *Show bootstrap support (>= 70)*: support values on the branches.
   - *Download PDF*: the tree as shown.
+  - Drag up or down over the tree to choose the samples in that part, then press *Show in
+    Alignment*.
 - **SNP distances**: the SNP matrix, rows and columns in tree order. Queries are in red
   (row names and column headers). Darker blue = fewer differences: 0, 1-2, 3-5, 6-10,
   11-20; 21 or more is white. Point at a number in a query's row or column (an orange
@@ -102,11 +152,34 @@ is marked "(no result)" and its tabs say why.
   differs by gaps, Ns or ambiguity codes that fit: "0 SNPs" there does not mean the two
   sequences are identical letter for letter. The note above the table says
   over how many aligned positions the differences were counted.
+  All rows are shown on one page.
+  - Click **names** to choose rows (click again to un-choose), then *Show in Alignment*.
+  - Click a **number** in a query's row or column to open just that pair in the Alignment
+    page, compared with the query, at their first SNP.
+  - *Add to set* (next to *Show in Alignment*) adds the chosen rows to the open set (2.5);
+    the same button appears when you drag over the tree. *Add the N sequences of this
+    result to the set*, above the tabs, adds all sequences of the shown result.
 - **Closest matches**: all search hits for every query (also those not in the tree), with
   database metadata, filterable per column. `selected = TRUE` means the hit is in the tree.
   If more database sequences are equally close than fit in the tree, a yellow note says so
   (for example "101 database sequences are equally close ...; 20 are in the tree").
 - **Run log**: what happened in each step, with times, warnings and errors.
+
+**Runs on sets.** A blue line above the tabs says what was searched (*Searched only ...*,
+with the sequences of the sets turned to one orientation, if any) or compared (*The N
+sequences of ... compared with each other*, over which columns). For a comparison within
+sets:
+
+- There is one result (no *Show results for*), and no *Closest matches* tab.
+- Queries and file sequences of the sets are in red; database samples are not.
+- A yellow note names sequences left out (bases in less than half of a picked region),
+  and a note names the sequences whose start or end limits the columns compared (often a
+  short fragment among genomes): pick a region to compare more of the genome.
+- In the SNP table you can point at **any** number to see which positions differ
+  (numbered along the red sequence of the pair, else along the row); the box is made
+  when you point at it. Click any number to open that pair in the Alignment page.
+- *Add the N sequences of this result to the set* adds them as the members they are (a
+  database sample stays a database sample).
 
 ### 2.3 Database viewer
 
@@ -131,10 +204,15 @@ Left side:
   the date range changes, even if they are no longer shown.
 - **Charts and downloads use**: all samples shown in the table (after all filters), or
   only the chosen samples.
-- **Table (CSV)** and **Sequences (FASTA)**: download those samples.
+- **Table (CSV)** and **Sequences (FASTA)**: download those samples. The CSV file is made
+  for Excel with Norwegian settings: columns separated by `;`, decimal comma (`2,5`), and
+  UTF-8 with a byte order mark so that æ, ø and å show correctly. (Earlier versions
+  used `,` and a decimal point; scripts that read it must use `;`, e.g. R `read.csv2`.)
 - **Send chosen samples to Outbreak detection** (at most 50): copies their sequences into
   the paste box of Outbreak detection, selects the same database and switches page.
   Press *Run comparison* there.
+- **Add chosen samples to the set**: adds them to the open set (2.5). The line under the
+  button says which set that is.
 
 Right side (tabs):
 
@@ -153,6 +231,179 @@ Right side (tabs):
   show the whole world. Works without internet.
 
 Each chart can be downloaded as a PDF.
+
+### 2.4 Alignment
+
+Shows an alignment with every sequence compared with an **anchor**: by default the
+**majority consensus** (no anchor sequence chosen). The blue line above the alignment
+always says what is compared with what.
+
+Left side (settings):
+
+- **Show**: *Results of the last run* (with a *Result* list that follows *Show results
+  for*), *An earlier run folder* (*Choose a run folder...*, then a result in it), *A FASTA
+  file (aligned or not)*, or *A set* (2.5; choosing a set here also opens it on the Sets
+  page). A file whose sequences all have the same length is shown as an alignment (gaps
+  as `-`). Otherwise the page says it is not aligned: press **Align these sequences**. The
+  alignment runs in the background (see "Aligning" in 2.5), and the file is then shown,
+  with the sequences that were turned (reverse complement) named in the yellow note.
+  A set without an alignment has an **Align the set** button here too.
+- **Show a query and its closest** (run results): a query and its N closest sequences by
+  SNPs. When more are as close as number N, they are all shown, and a note says so.
+  **Show all sequences** goes back to all rows. **Add the shown rows to the set** adds the
+  rows shown (for example a query and its closest) to the open set (2.5).
+- **Compare with**: the majority consensus or one sequence (the anchor). Also: right-click
+  a name or a row and choose *Use ... as anchor* (or *Compare with the majority
+  consensus*).
+- **Variable columns only**: hide columns where no sequence differs from the anchor
+  (SNPs, ambiguity codes, indels; no data does not count). A red tick on the column
+  ruler marks where columns were skipped.
+- **Hide columns that are a gap in the anchor**: hide columns where the anchor has a gap
+  inside it (extra bases in other sequences). A purple mark on the anchor row shows
+  where; point at it to see how many columns.
+- **Consensus settings** (closed by default): per column, the most common of A/C/G/T
+  wins; an ambiguity code splits its vote (R = half A, half G); N, gaps and missing ends
+  do not vote. A column where most sequences have a gap is `-`; a column without any
+  base is N. *When the most common base is not clear*: an ambiguity code (A/G tie = R,
+  default) or N. *The most common base must reach a threshold* (50-100%): otherwise the
+  ambiguity code of the fewest bases that together reach it (or N).
+- **Download**: *FASTA (whole)*, *FASTA (columns on screen)*, *PDF (on screen)*, *Picture
+  (PNG)* and *Interactive page (HTML)*: one file that opens in any browser without
+  FHInumerics (zoom, move, sort and point at cells work; it keeps the anchor chosen when
+  it was made). It contains the sequences and metadata shown, so share it like the data.
+  Rows are in the order shown, the anchor first.
+
+Above the alignment:
+
+- A bar with **Sort rows** (tree order for run results, fewest or most SNPs, name, sample
+  date), **Go to position** (a base number in the anchor), **Zoom in**, **Zoom out**,
+  **Whole alignment**, **Letters**, **Previous / Next difference** (a SNP or indel in any
+  row, or only in the row you clicked), and which columns are on screen.
+- The **overview**: how many sequences differ from the anchor in each column, along the
+  whole alignment (red where 3 or more differ; the compared region of a run is unshaded).
+  The blue box is the part on screen: click or drag it to move.
+- The colour key.
+
+The alignment:
+
+- The anchor is the top row. Queries are in red. After each name: the sample date (if the
+  data has dates) and the number of SNPs to the anchor, counted like the SNP table (over
+  the compared region for run results, so with a sequence as anchor it is the number in
+  the SNP table; over the whole alignment otherwise).
+- Only what differs from the anchor is drawn: **red-orange** a SNP; **dark blue** an
+  ambiguity code that cannot match the anchor (counted as a SNP); **light blue** an
+  ambiguity code that fits (not counted); **purple** an indel (a gap where the anchor has
+  a base, or extra bases where the anchor has a gap; never counted as a SNP); **light
+  grey** no data (N, or the missing start or end of a sequence); **grey with a letter**
+  the anchor has no base there, so there is nothing to compare. Zoomed in to letters, `·`
+  means the same as the anchor. For run results, the alignment is shown before trimming:
+  columns outside the compared region are greyed. Sequences left out by trimming
+  (covering less than half of the compared region) have grey names.
+- **Mouse wheel** over the alignment zooms at the pointer; **drag** moves;
+  **double-click** shows the whole alignment.
+- **A region (sets only)**: when a set is shown, drag along the column numbers above the
+  alignment to mark a region (a blue band). The blue box then says *Region: columns ...*
+  with **Compare the set over columns ...** (switches to Outbreak detection, set to compare
+  the set's sequences with each other over that region; see 2.1) and **Clear region**. The
+  region belongs to that set and its alignment: it goes when the set's alignment or its
+  sequences change. If sequences were added after the alignment was made, align the set
+  first. When zoomed out, a pixel covers several
+  columns and shows the most important colour among them (SNP first).
+- **Point** at a cell: the sequence, its date and metadata, its totals (SNPs, indel
+  events and columns, ambiguity codes, % no data), the alignment column, its base number
+  in this sequence and in the anchor (as in the SNP table's box; for a reverse-complemented
+  query, on its reverse complement), the two bases, what the colour means, and how many
+  sequences differ there. **Click** a name to choose that row for Previous/Next difference.
+
+### 2.5 Sets
+
+A set is a collection of sequences from anywhere in FHInumerics: database samples (from one
+or more databases), queries and their closest sequences from runs, rows of the Alignment
+page, and FASTA files. Sets are kept in the window until you press *Save*.
+
+Adding sequences: press **Add to set** on another page (Database viewer: chosen samples;
+Outbreak detection: names chosen in the SNP table, samples chosen in the tree, or the
+whole result; Alignment page: the rows shown), or choose a **FASTA file** (aligned or not)
+on the Sets page. They are added to the **open set** - the one chosen in the *Sets* list -
+or to a new set if none is open. A message says how many were added, and which were
+already in the set or renamed:
+
+- The same database sample (same database, same ID) is kept once. A query or file
+  sequence with the same name and the same sequence as one in the set is kept once; with
+  another sequence it is added as `<name>_2`.
+- A query or file sequence named like a database sample becomes `<name>_query` (as in
+  runs, 3.1). When two databases both have a sample with one name, both become
+  `<name>_<database>`, using the database's `short_name` from `config.yaml` (section 5),
+  e.g. `AY649695.1_demo`.
+- Queries keep the orientation they were given; a query that a run reverse-complemented
+  has a note in the *note* column.
+
+Left side:
+
+- **Sets**: the sets in the window and the sets saved in the results folder
+  (`<results folder>/sets/`); click one to open it. *(not saved)* means it has changes
+  that are not saved. **New set** makes an empty set; **Open a set folder...** opens a set
+  saved somewhere else.
+- **Name of the open set** and **Save in** (the folder; type a path or use *Browse...*;
+  default `<results folder>/sets`). **Save** writes the set to `<Save in>/<name>/`. If
+  another saved set is already there, you are asked whether to replace it. Changing the
+  name and saving again saves a copy under the new name; the old folder stays.
+- **Delete** asks first, then removes the set from the window and its saved files (only
+  the files FHInumerics writes; any other file you put in the folder stays).
+- **Add sequences**: a FASTA file. If it is aligned (all the same length), the set keeps
+  its alignment when the set was empty.
+- **Alignment**: whether the set is aligned, **Align the set**, and **Show in Alignment**
+  (opens the set on the Alignment page).
+- **Analyse in Outbreak detection** (each switches to Outbreak detection, ready to run):
+  - **Compare the sequences with each other**: the set's sequences (or the rows chosen in
+    the table; also *Compare the chosen with each other* above the table) compared with
+    each other, without a database (2.1, 3.7). At most 300.
+  - **Search new sequences against this set**: the set becomes what is searched instead
+    of a database; paste or choose the new sequences (2.1, 3.7).
+  - **Search a database with these sequences**: the set (or the rows chosen; also *Search a
+    database with the chosen*) as the queries of a database search (2.1). A run takes at
+    most 50 sequences: for a larger set, choose up to 50 rows.
+- **Download**: *Sequences (FASTA)* (as given, not aligned) and *Table (CSV)*, in the same
+  CSV form as the Database viewer's (`;`, decimal comma, UTF-8).
+
+Right side: the set's name, how many sequences come from where, whether it is saved and
+aligned, and a table of its sequences: `id` (the name in the set), `source` (database,
+query or file), `database`, `original_id` (the ID in its database, or the name as given),
+`added_from`, `note`, then the metadata columns of all its databases. Click rows to
+choose them and press **Remove from the set**.
+
+**Aligning.** *Align the set* (or *Align these sequences* for a FASTA file) first finds
+sequences that are reverse complements: DECIPHER `OrientNucleotides` compares each
+sequence with six complete HAV genomes, one per subgenotype (IA, IB, IIA, IIB, IIIA,
+IIIB; `data/orientation_panel.fasta`), and turns those that match better reversed and
+complemented. Then the sequences are aligned with DECIPHER `AlignSeqs`, as in runs. This
+runs in the background: a box under the menu shows the progress on every page, the window
+stays usable, and **Cancel** stops it. For more than 500 sequences you are asked first
+(the whole demo database, 1,773 sequences, took about 1.5 minutes on a fast computer).
+When it is done, a message names the sequences that were turned. In the Alignment page
+they are numbered on their reverse complement, and the yellow note says so.
+
+The alignment is kept with the set (and saved with it). Removing sequences keeps it
+(their rows are taken out). Sequences added later are not in it: the set is then "out of
+date", the Alignment page shows the sequences that are in the alignment and names the
+others, and *Align the set* makes a new alignment. A set made from run results, Alignment
+page rows or an aligned FASTA file starts with that alignment, so it can be shown at once.
+
+**A saved set** is a folder with:
+
+| File | Content |
+|---|---|
+| `sequences.fasta` | the sequences by their names in the set, as given (not aligned) |
+| `metadata.tsv` | the table shown on the Sets page (tab-separated) |
+| `set.yaml` | name, dates, FHInumerics version, number of sequences, the set's checksum, its sources (each database with its file checksum and number of samples; queries; files), what was done when, and the alignment's details |
+| `aligned.fasta` | the alignment, if the set has one (turned sequences reverse-complemented, as listed in `set.yaml`) |
+
+The set's checksum is the MD5 of one line `name<TAB>SEQUENCE` per sequence, sorted by
+name (byte order), each ending in a newline (sequence in capitals, without gaps). It
+changes when a sequence or a name changes, not when the order or the metadata changes.
+
+The browser asks "Leave page?" when you close the tab while a set has unsaved changes
+(closing the tab stops FHInumerics, and unsaved sets are lost).
 
 Closing the browser tab stops FHInumerics (when started with the start file).
 
@@ -251,9 +502,46 @@ Closing the browser tab stops FHInumerics (when started with the start file).
   of replicates.
 - Rooted at the midpoint (`phangorn::midpoint`).
 
+### 3.7 Runs on sets (`R/compare.R`, `R/sets.R`)
+
+Sets do not need to be saved first. Several sets are taken together: the same sample
+(same database and ID, or a query or file sequence with the same name and sequence) is
+kept once, names follow the set rules (2.5), and a column `in_set` says which set(s) each
+sequence is in.
+
+**New sequences with sets only.**
+
+- The sets' sequences are turned to one orientation first (DECIPHER `OrientNucleotides`
+  against the six genomes of `data/orientation_panel.fasta`, as when aligning a set), so
+  that a sequence stored as its reverse complement is found and aligned the right way
+  round; the run names any that were turned. They are then sorted by name: ties between
+  equally close sequences are broken by this order, so the same sets always give the same
+  neighbours.
+- This "database" and its search index are kept in `cache/set_<checksum>/` and reused
+  while the sets' sequences and names are the same (the set checksum, 2.5).
+- Then everything is as with a database (3.2-3.6). The set table (source, database,
+  original ID, where it was added from, note, `in_set`, metadata) is the metadata of the
+  hits and the tree.
+
+**The sequences of sets with each other.**
+
+- No search. The alignment is the set's own (as shown on the Alignment page) when it has
+  every sequence compared; otherwise they are oriented and aligned first, exactly as
+  *Align the set* does (2.5). The manifest says which, and the run folder holds the
+  alignment used.
+- Trimming: to the columns every sequence covers (from the latest start to the earliest
+  end; nobody is left out), or to the region picked on the Alignment page (2.4). With a
+  region, sequences with A/C/G/T in less than half of it are left out (named on screen,
+  in the run log and in the manifest).
+- SNPs (3.5) and tree (3.6) as in other runs. At most 300 sequences.
+- Fragments of different parts of the genome are only placed correctly when the set also
+  holds a sequence that spans them (for example a complete genome): two fragments alone
+  are laid over each other by the aligner. See 7.
+
 ## 4. Output files
 
-Each run makes its own folder `<date>-<time>_<first query name>` in the results folder:
+Each run makes its own folder `<date>-<time>_<first query name>` in the results folder
+(a comparison within sets: `<date>-<time>_<set name>`):
 
 | File | Content |
 |---|---|
@@ -261,6 +549,7 @@ Each run makes its own folder `<date>-<time>_<first query name>` in the results 
 | `search_hits.tsv` | all search hits with database metadata; `selected` = in the tree |
 | `closest_summary.tsv` | per query: best identity, best mismatches, how many are equally close, how many shown |
 | `alignment.fasta` | the trimmed alignment used for SNPs and tree |
+| `alignment_untrimmed.fasta` | the whole alignment before trimming, with real names (shown in the Alignment page) |
 | `snp_matrix.tsv` | SNP differences between all sequences |
 | `compared_sites.tsv` | number of compared positions per pair (both have a base other than N or a gap) |
 | `tree.nwk` | the tree (Newick, bootstrap support as node labels) |
@@ -269,8 +558,36 @@ Each run makes its own folder `<date>-<time>_<first query name>` in the results 
 | `work/` | intermediate files (internal IDs, untrimmed alignment) |
 | `per_query/NN_<name>/` | with several queries: each query's own `alignment.fasta`, `snp_matrix.tsv`, `compared_sites.tsv`, `tree.nwk`, `tree_metadata.tsv` (and `work/`). The files above are for all queries together |
 
+When the queries came from a set (2.1), `run_manifest.yaml` has an `input` block (the
+set's name, checksum, number of sequences, folder and whether it was saved; "all" or
+"chosen rows"), and `exclude_self` under `settings` lists, for each sample from the
+searched database, the entry it left out.
+
+Every `run_manifest.yaml` has a `mode`: `database` (new sequences with a database),
+`set_database` (new sequences with sets only) or `within_set` (the sequences of sets with
+each other). Runs on sets also have a folder **`set/`**: the set(s) used, as a saved set
+(`sequences.fasta`, `metadata.tsv`, `set.yaml`, and `aligned.fasta` for a comparison
+within sets). It can be opened with *Open a set folder...* and repeats the run on the
+command line (README).
+
+- `set_database`: the `database` block has `type: sets`, the checksum of the sets
+  together (`set_checksum`), each set (`sets`: name, checksum, number of sequences,
+  folder, saved) and the sequences turned to one orientation (`reverse_complemented`).
+- `within_set`: no `database`, `search_hits.tsv`, `closest_summary.tsv` or `query.fasta`.
+  `input` lists the sets, the set compared and its checksum, "all" or "chosen rows";
+  `alignment` says where the alignment came from, how and when it was made, its MD5 and
+  whether it was made in this run; `settings` has `bootstrap`, `threads` and `region`
+  (alignment columns `FROM-TO` of `set/aligned.fasta`, which is the same as
+  `alignment_untrimmed.fasta`; no region = the columns every sequence covers). When a
+  region picked on a set's alignment had to be moved to the columns of the rows chosen, the
+  columns picked are in `input: region_as_picked`. `results` gives the number of sequences,
+  the compared region, those left out (`dropped`) and those whose start or end limits the
+  region (`limited_by`).
+
 `run_manifest.yaml` lists under `results` each result (all queries together, then each
-query) with its folder, number of neighbours and compared positions, or why it failed.
+query) with its folder, number of neighbours and compared positions, the compared region
+(`compared_region`, columns of `alignment_untrimmed.fasta`) and the sequences left out by
+trimming (`dropped`), or why it failed.
 
 ## 5. Settings (`config.yaml`)
 
@@ -289,7 +606,7 @@ with comments. Relative paths are relative to the folder.
 | `settings: bootstrap` | 100 bootstrap replicates | `true` |
 | `settings: threads` | CPU threads for search and alignment | 4 |
 | `python` | Python to use for MAFFT, if several are installed | found automatically |
-| `databases` | list of databases: `name`, `fasta`, `metadata` (.tsv/.csv), `id_column`, `display_columns`, `default_labels`, `default_colour`, `date_column` (Database viewer: default date column; optional, default `date` or the first column holding dates), `country_column` (map; default `country`) | demo database |
+| `databases` | list of databases: `name`, `fasta`, `metadata` (.tsv/.csv), `id_column`, `display_columns`, `default_labels`, `default_colour`, `date_column` (Database viewer: default date column; optional, default `date` or the first column holding dates), `country_column` (map; default `country`), `short_name` (sets: added to a sample's name when two databases in a set have a sample with that name; optional, default the name with spaces and other characters replaced by `_`) | demo database |
 
 **MAFFT (optional):** with `aligner: mafft`, the first start also installs pymafft
 (pinned in `python/requirements.txt`) into `tools/python-packages`, using a Python
@@ -325,7 +642,11 @@ Comparisons on the test queries (`tests/`, 2026-10-28):
 - No maximum-likelihood trees: IQ-TREE as a Python package (piqtree) did not give
   identical trees on repeated runs in our tests, and FastTree is not available as an R or
   Python package.
-- At most 50 query sequences per run.
+- At most 50 query sequences per run; at most 300 sequences compared within sets.
+- Sets only: fragments of different parts of the genome are laid over each other by the
+  aligner when nothing in the set spans them (no complete genome), which gives many
+  meaningless "SNPs" between them. Add a complete genome to the set, or compare fragments
+  of one region only.
 - The map places a country by its name. Common variants (United Kingdom, Viet Nam,
   United States, ...) and notes in brackets ("Egypt (suspected)") are handled; other
   unknown names are listed above the map.

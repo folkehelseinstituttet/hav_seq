@@ -26,6 +26,24 @@ db_sequences <- function(db, cfg, ids) {
   ref$seqs[intersect(ids, names(ref$seqs))]
 }
 
+# A table as CSV for Excel with Norwegian settings: ";" between columns, decimal comma,
+# UTF-8 with a byte order mark (so Excel reads æ, ø, å). Metadata columns are text; one
+# where every value is a decimal number (like 12.5) gets decimal commas too. Other
+# values are left as they are (leading zeros stay).
+write_csv2 <- function(df, file) {
+  df[] <- lapply(df, function(x) {
+    if (!is.character(x)) return(x)
+    v <- x[!is.na(x) & nzchar(x)]
+    if (length(v) && all(grepl("^-?[0-9]+(\\.[0-9]+)?$", v)) && any(grepl(".", v, fixed = TRUE))) sub(".", ",", x, fixed = TRUE) else x
+  })
+  con <- file(file, open = "wb")
+  on.exit(close(con))
+  writeBin(as.raw(c(0xEF, 0xBB, 0xBF)), con)
+  text <- utils::capture.output(utils::write.csv2(df, stdout(), row.names = FALSE, na = ""))
+  writeLines(enc2utf8(text), con, sep = "\r\n", useBytes = TRUE)
+  invisible(file)
+}
+
 # ---- Charts ------------------------------------------------------------------------
 # Many different values make an unreadable legend: keep the most common, rest "Other".
 lump_values <- function(x, n = 12) {
