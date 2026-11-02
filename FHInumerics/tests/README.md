@@ -62,3 +62,19 @@ query named like another sample is run; the database sample leaves out its own e
 the pasted query still finds its namesake at 100%, the manifest records the set and
 exclude_self, a sample from another database excludes nothing, more than 50 gives a plain
 message, and `cli/fhinumerics --query-set` gives the same exclusion and SNP matrix.
+
+Runs on sets (decision 0013), 2026-10-29: every manifest has a `mode`; the example in the
+paste box is the first test fragment. Within a set of five genomes and the reversed genome
+query: 2 SNPs to LC128713.1, the query turned and numbered on its reverse complement
+(3001/3101) in the hover box, the alignment made in the run and copied into the run folder
+(`set/`), the same SNP matrix when the set's alignment is reused, and 1 SNP over a region
+around base 3001 only. A fragment among genomes limits the columns compared; a region
+outside it leaves it out; fragments of two regions with a genome that spans both give the
+"do not overlap" message; more than 300 gives a plain message; a region is moved to the
+columns of chosen rows (toy alignment); two sets together keep a shared sample once. A
+set as the database: only its sequences are searched, the 3-substitution fragment finds
+KY782331.1 with 3 mismatches, a member stored reversed is turned and found by the reversed
+genome query (2 SNPs), and the manifest, cache folder and set copy are as described in
+MANUAL.md 4. `--within-set --region` and `--set-db` on the command line give the same SNP
+matrix and hits. The SNP table's corner marks for all pairs (`snp_flags()`) equal those of
+`snp_tips()` for every query pair of the earlier runs.

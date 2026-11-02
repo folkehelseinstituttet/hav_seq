@@ -244,8 +244,9 @@ msa_from_set <- function(set) {
 # The set (or the members with these keys) as queries for Outbreak detection (0012):
 # sequences by their names in the set, as given; exclude_self for the members from the
 # searched database (name in the set -> their ID there; others leave out nothing); and
-# what run_manifest.yaml records about the set (`input`).
-set_queries <- function(set, database, keys = NULL) {
+# what run_manifest.yaml records about the set (`input`). Searching sets (`db_set`, from
+# set_db()): members that are the same sample as one in db_set leave that one out (0013).
+set_queries <- function(set, database, keys = NULL, db_set = NULL) {
   m <- set$members
   if (length(keys)) m <- m[m$key %in% keys, , drop = FALSE]
   if (!nrow(m)) stop("The set '", set$name, "' has no sequences. Add sequences on the Sets page first.", call. = FALSE)
@@ -256,14 +257,144 @@ set_queries <- function(set, database, keys = NULL) {
                  nrow(m)), call. = FALSE)
   }
   names_in_set <- set_names(set$members)[match(m$key, set$members$key)]
-  own <- m$source == "database" & m$database %in% database
+  if (is.null(db_set)) {
+    own_id <- m$original_id
+    own <- m$source == "database" & m$database %in% database
+  } else {
+    own_id <- set_same_in(m, unname(set$seqs[m$key]), db_set)
+    own <- !is.na(own_id)
+  }
   list(seqs = stats::setNames(unname(set$seqs[m$key]), names_in_set),
-       exclude_self = if (any(own)) as.list(stats::setNames(m$original_id[own], names_in_set[own])) else FALSE,
+       exclude_self = if (any(own)) as.list(stats::setNames(own_id[own], names_in_set[own])) else FALSE,
        n_own = sum(own),
        input = Filter(Negate(is.null), list(
          set = set$name, set_checksum = set_checksum(set_fasta(set)), set_sequences = nrow(set$members),
          set_folder = set$folder, set_saved = !is.null(set$folder) && !isTRUE(set$dirty),
          queries_from_set = if (nrow(m) < nrow(set$members)) "chosen rows" else "all")))
+}
+
+# ---- Sets as the database, and compared with each other (decision 0013) ----------------
+
+# The name in `other` (a set) of the same sample as each member in `m` (with sequences
+# `seqs`), or NA: the same database sample (database and ID), or a query or file sequence
+# with the same name and sequence (the rule of set_add()).
+set_same_in <- function(m, seqs, other) {
+  om <- other$members
+  sample_of <- function(mm, ss) ifelse(mm$source == "database", mm$key, paste("s", mm$original_id, ss, sep = "\t"))
+  set_names(om)[match(sample_of(m, seqs), sample_of(om, unname(other$seqs[om$key])))]
+}
+
+# Several sets as one: all members, set by set; the same sample is kept once (set_add())
+# and names follow the set rules over all of them (set_names()). Column in_set: the sets
+# each sequence is in. One set comes back as it is (with its alignment).
+set_merge <- function(sets) {
+  sets <- unname(sets)
+  if (length(sets) == 1) return(sets[[1]])
+  set_names_given <- vapply(sets, function(s) s$name, "")
+  out <- set_new(paste(set_names_given, collapse = " + "))
+  for (s in sets) {
+    m <- s$members
+    if (!nrow(m)) next
+    out <- set_add(out, set_candidates(m$original_id, s$seqs[m$key], m$source, m$added_from, database = m$database,
+                                       database_md5 = m$database_md5, db_short = m$db_short, note = m$note,
+                                       meta = m[, setdiff(names(m), SET_FIELDS), drop = FALSE]))$set
+  }
+  if (nrow(out$members)) {
+    seqs <- unname(out$seqs[out$members$key])
+    has <- matrix(vapply(sets, function(s) !is.na(set_same_in(out$members, seqs, s)), logical(nrow(out$members))),
+                  nrow(out$members))
+    out$members$in_set <- apply(has, 1, function(h) paste(set_names_given[h], collapse = ", "))
+  }
+  out$history <- sprintf("%s made from the sets %s", format(Sys.time(), "%Y-%m-%d %H:%M"),
+                         paste(sprintf("'%s'", set_names_given), collapse = ", "))
+  out$dirty <- FALSE
+  out
+}
+
+# What run_manifest.yaml records about each set used.
+sets_info <- function(sets) {
+  lapply(unname(sets), function(s) Filter(Negate(is.null), list(
+    name = s$name, checksum = set_checksum(set_fasta(s)), n_sequences = nrow(s$members), folder = s$folder,
+    saved = !is.null(s$folder) && !isTRUE(s$dirty))))
+}
+
+# Sets to compare with each other (0013 (b)), for run_compare(within = ): their members
+# together (set_merge()), or the rows `keys` of one set. A region picked on the Alignment
+# page ("FROM-TO", columns of the set's alignment as shown there, = its aligned.fasta)
+# becomes columns of the alignment of the sequences compared. Without an alignment of the
+# set (several sets, or not aligned yet) the region is in columns of the alignment the run
+# makes.
+set_within <- function(sets, keys = NULL, region = NULL) {
+  if (!length(sets)) stop("Choose at least one set to compare.", call. = FALSE)
+  full <- set_merge(sets)
+  what <- if (length(sets) == 1) sprintf("The set '%s'", full$name) else sprintf("The sets %s together", full$name)
+  s <- full
+  if (length(keys)) {
+    s <- set_remove(full, setdiff(full$members$key, keys))
+    what <- sprintf("The choice from the set '%s'", full$name)
+  }
+  used <- region
+  if (!is.null(region) && !is.null(set_alignment_status(full))) {
+    st <- set_alignment_status(s)
+    if (is.null(st) || length(st$missing)) {
+      stop("The set's alignment does not have all the sequences to compare (some were added after it was made). ",
+           "Press Align the set, then pick the region again in the Alignment page.", call. = FALSE)
+    }
+    used <- set_region_columns(full, s, region)
+  }
+  list(set = s, what = what, region = used, input = Filter(Negate(is.null), list(
+    sets = sets_info(sets), set = s$name, set_checksum = set_checksum(set_fasta(s)), set_sequences = nrow(s$members),
+    compared = if (length(keys)) "chosen rows" else "all",
+    region_as_picked = if (!is.null(region) && !identical(region, used)) region)))
+}
+
+# A region "FROM-TO" in columns of the alignment of the set `full` (as the Alignment page
+# shows it) -> the same stretch in columns of the alignment of the members of `s` (fewer
+# rows, so columns that are a gap in all of them are left out).
+set_region_columns <- function(full, s, region) {
+  aln <- full$alignment$aln
+  shown <- colSums(msa_matrix(aln[set_alignment_status(full)$have]) != MSA_GAP) > 0
+  used <- colSums(msa_matrix(aln[set_alignment_status(s)$have]) != MSA_GAP) > 0
+  r <- parse_region(region, sum(shown))
+  col <- cumsum(shown)[used]
+  hit <- which(col >= r[1] & col <= r[2])
+  if (!length(hit)) stop(sprintf("None of the sequences compared has bases in columns %s.", region), call. = FALSE)
+  sprintf("%d-%d", min(hit), max(hit))
+}
+
+# Sets as the database to search (0013 (c)): their members together (set_merge()), turned
+# to one orientation (OrientNucleotides against the panel, as before aligning) and in name
+# order, so the set's checksum decides the database and its order (ties). Kept with its
+# search index in cache/set_<checksum>/. Returns a database like those in config.yaml for
+# run_compare(); `from_sets` holds the set searched and what the manifest records.
+set_db <- function(sets, cfg, threads = 1) {
+  if (!length(sets)) stop("Choose at least one set to search.", call. = FALSE)
+  s <- set_merge(sets)
+  if (!nrow(s$members)) stop(sprintf("The set '%s' has no sequences. Add sequences on the Sets page first.", s$name), call. = FALSE)
+  fasta <- set_fasta(s)
+  checksum <- set_checksum(fasta)
+  dir <- file.path(cfg$cache_dir, paste0("set_", substr(checksum, 1, 12)))
+  db_file <- file.path(dir, "database.fasta")
+  turned_file <- file.path(dir, "turned.txt")
+  if (!file.exists(db_file) || !file.exists(turned_file)) {
+    dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+    o <- set_orient(fasta, threads)
+    oriented <- stats::setNames(as.character(o$dna)[match(o$ids, names(o$dna))], names(fasta))
+    writeLines(o$turned, turned_file)
+    tmp <- tempfile(tmpdir = dir)
+    write_fasta(oriented[order(names(oriented), method = "radix")], tmp)
+    file.rename(tmp, db_file)
+  }
+  turned <- readLines(turned_file, warn = FALSE)
+  # The set's table as database metadata (written each time: metadata is not in the checksum).
+  tab <- set_table(s)
+  tab <- tab[, setdiff(names(tab), "database_md5"), drop = FALSE]
+  tab[] <- lapply(tab, function(x) gsub("[\t\r\n\"]+", " ", x))
+  utils::write.table(tab, file.path(dir, "metadata.tsv"), sep = "\t", quote = FALSE, row.names = FALSE, na = "")
+  list(name = paste0(if (length(sets) == 1) "Set: " else "Sets: ", s$name), fasta = db_file,
+       metadata = file.path(dir, "metadata.tsv"), id_column = "id", cache_folder = dir,
+       from_sets = list(set = s, turned = turned, manifest = list(
+         type = "sets", set_checksum = checksum, sets = sets_info(sets), reverse_complemented = as.list(turned))))
 }
 
 # ---- Where new members come from -------------------------------------------------------
@@ -280,12 +411,26 @@ set_from_database <- function(db, cfg, ids, meta, added_from = "Database viewer"
 }
 
 # Where the rows of a run's alignment come from (msa_load_run_folder(), msa_from_result()).
-msa_run_origin <- function(manifest, run, databases = list()) {
+# A run on sets (0013) passes the set it used (the run folder's set/): its members.
+msa_run_origin <- function(manifest, run, databases = list(), set = NULL) {
   aligner <- manifest$settings$aligner %||% "decipher"
   method <- if (aligner == "mafft") "MAFFT --auto (pymafft)" else paste("DECIPHER AlignSeqs", manifest$tools$DECIPHER %||% "")
-  list(kind = "run", run = run, database = manifest$database$name, md5 = manifest$database$fasta_md5,
-       db_short = db_short_name(manifest$database$name, databases), renamed = unlist(manifest$renamed),
-       made = manifest$created, method = trimws(method), versions = manifest$tools)
+  if (identical(manifest$mode, "within_set")) method <- manifest$alignment$method %||% method
+  o <- list(kind = "run", run = run, database = manifest$database$name, md5 = manifest$database$fasta_md5,
+            db_short = if (!is.null(manifest$database$name)) db_short_name(manifest$database$name, databases),
+            renamed = unlist(manifest$renamed),
+            made = manifest$created, method = trimws(method), versions = manifest$tools)
+  if (!is.null(set)) {
+    o$members <- cbind(id = set_names(set$members), set$members)
+    o$seqs <- set$seqs
+  }
+  o
+}
+
+# The set a run on sets used (its copy in the run folder), or NULL.
+run_folder_set <- function(run_dir) {
+  if (!file.exists(file.path(run_dir, "set", "set.yaml"))) return(NULL)
+  tryCatch(set_load(file.path(run_dir, "set")), error = function(e) NULL)
 }
 
 # Rows of a viewer alignment (run result, run folder, FASTA file or set). Queries and
@@ -309,6 +454,18 @@ set_from_msa <- function(a, rows = rownames(a$m), added_from = a$label) {
     m <- o$members[match(rows, o$members$id), , drop = FALSE]
     cand <- set_candidates(m$original_id, o$seqs[m$key], m$source, m$added_from, database = m$database,
                            database_md5 = m$database_md5, db_short = m$db_short, note = m$note,
+                           meta = m[, setdiff(names(m), c(SET_FIELDS, "id")), drop = FALSE],
+                           aln = aln, turned = turned, aln_info = info)
+  } else if (o$kind == "run" && !is.null(o$members)) {
+    # A run on sets: rows that are members of the set come back as they are there; the
+    # others are the run's queries.
+    m <- o$members[match(rows, o$members$id), , drop = FALSE]
+    q <- is.na(m$key)
+    given <- ifelse(rows %in% o$renamed, names(o$renamed)[match(rows, o$renamed)], rows)
+    cand <- set_candidates(ifelse(q, given, m$original_id), ifelse(q, as_given, unname(o$seqs[m$key])),
+                           ifelse(q, "query", m$source), added_from, database = m$database,
+                           database_md5 = m$database_md5, db_short = m$db_short,
+                           note = ifelse(q & turned, paste("reverse-complemented in the run", o$run, "(kept as given here)"), m$note),
                            meta = m[, setdiff(names(m), c(SET_FIELDS, "id")), drop = FALSE],
                            aln = aln, turned = turned, aln_info = info)
   } else if (o$kind == "run") {
@@ -380,6 +537,16 @@ set_yaml <- function(set, al = set_alignment(set)) {
 # Write a set to its folder: sequences.fasta, metadata.tsv, set.yaml and (if aligned)
 # aligned.fasta. Returns the set, now saved there.
 set_save <- function(set, folder) {
+  set_write(set, folder)
+  set$folder <- normalizePath(folder)
+  set$save_in <- dirname(set$folder)
+  set$dirty <- FALSE
+  set
+}
+
+# The files of a saved set, without changing the set (set_save(); the copy of the sets in a
+# run folder, 0013).
+set_write <- function(set, folder) {
   dir.create(folder, recursive = TRUE, showWarnings = FALSE)
   if (!dir.exists(folder)) stop("Could not make the folder ", folder, ". Choose another folder.", call. = FALSE)
   tab <- set_table(set)
@@ -389,10 +556,7 @@ set_save <- function(set, folder) {
   al <- set_alignment(set)
   if (is.null(al)) unlink(file.path(folder, "aligned.fasta")) else write_fasta(al$aln, file.path(folder, "aligned.fasta"))
   yaml::write_yaml(set_yaml(set, al), file.path(folder, "set.yaml"))
-  set$folder <- normalizePath(folder)
-  set$save_in <- dirname(set$folder)
-  set$dirty <- FALSE
-  set
+  invisible(folder)
 }
 
 # Open a saved set folder.
@@ -477,24 +641,31 @@ orientation_panel <- function() read_fasta(file.path(getOption("fhinumerics.root
 set_align <- function(seqs, threads = 1, verbose = FALSE) {
   if (length(seqs) < 2) stop("At least 2 sequences are needed for an alignment.", call. = FALSE)
   step <- function(x) if (verbose) cat("STEP ", x, "\n", sep = "")
-  panel <- orientation_panel()
-  ids <- paste0("S", seq_along(seqs))
   step("Orienting")
-  dna <- Biostrings::DNAStringSet(c(stats::setNames(unname(panel), paste0("R", seq_along(panel))),
-                                    stats::setNames(unname(seqs), ids)))
-  o <- DECIPHER::OrientNucleotides(dna, reference = seq_along(panel), orientation = "both", type = "both",
-                                   verbose = FALSE, processors = threads)
-  turned <- names(seqs)[o[[1]][-seq_along(panel)] %in% "rc"]
-  aln <- DECIPHER::AlignSeqs(o[[2]][-seq_along(panel)], processors = threads, verbose = verbose)
+  o <- set_orient(seqs, threads)
+  aln <- DECIPHER::AlignSeqs(o$dna, processors = threads, verbose = verbose)
   step("Saving")
   pkg <- function(p) as.character(utils::packageVersion(p))
-  list(aln = stats::setNames(as.character(aln)[match(ids, names(aln))], names(seqs)), turned = turned,
+  list(aln = stats::setNames(as.character(aln)[match(o$ids, names(aln))], names(seqs)), turned = o$turned,
        made = format(Sys.time(), "%Y-%m-%d %H:%M"),
        from = "by FHInumerics with DECIPHER",
        method = paste("DECIPHER OrientNucleotides (reverse complement, against 6 HAV genomes, one per subgenotype),",
                       "then DECIPHER AlignSeqs"),
        versions = list(FHInumerics = app_version(), R = R.version.string, DECIPHER = pkg("DECIPHER"),
                        Biostrings = pkg("Biostrings")))
+}
+
+# OrientNucleotides against the panel (reverse complement only). Returns the sequences in
+# one orientation as a DNAStringSet named by internal IDs (`ids`: S1, S2, ... in the order
+# given) and the names (as given) of those turned.
+set_orient <- function(seqs, threads = 1) {
+  panel <- orientation_panel()
+  ids <- paste0("S", seq_along(seqs))
+  dna <- Biostrings::DNAStringSet(c(stats::setNames(unname(panel), paste0("R", seq_along(panel))),
+                                    stats::setNames(unname(seqs), ids)))
+  o <- DECIPHER::OrientNucleotides(dna, reference = seq_along(panel), orientation = "both", type = "both",
+                                   verbose = FALSE, processors = threads)
+  list(dna = o[[2]][-seq_along(panel)], ids = ids, turned = names(seqs)[o[[1]][-seq_along(panel)] %in% "rc"])
 }
 
 # Start set_align() in a background R process (app/align_worker.R). Returns the job (an

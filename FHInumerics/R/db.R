@@ -80,11 +80,13 @@ prepare_db <- function(db, cfg, search = "decipher", log = message) {
   ref
 }
 
-# The database sequences and their internal IDs, cached in cache/<name>_<md5 prefix>/.
+# The database sequences and their internal IDs, cached in cache/<name>_<md5 prefix>/
+# (sets used as a database, set_db() in R/sets.R: in their own cache folder).
 load_db_seqs <- function(db, cfg) {
   if (!file.exists(db$fasta)) stop("Database FASTA not found: ", db$fasta, call. = FALSE)
   checksum <- unname(tools::md5sum(db$fasta))
-  dir <- file.path(cfg$cache_dir, paste0(gsub("[^A-Za-z0-9]+", "_", db$name), "_", substr(checksum, 1, 12)))
+  dir <- db$cache_folder %||%
+    file.path(cfg$cache_dir, paste0(gsub("[^A-Za-z0-9]+", "_", db$name), "_", substr(checksum, 1, 12)))
   seqs_rds <- file.path(dir, "seqs.rds")
   if (!file.exists(seqs_rds)) {
     dir.create(dir, recursive = TRUE, showWarnings = FALSE)

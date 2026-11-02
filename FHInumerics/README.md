@@ -68,8 +68,21 @@ in `config.example.yaml` and in [MANUAL.md](MANUAL.md).
 Options: `--db NAME`, `--neighbours 20`, `--min-coverage 90`, `--no-bootstrap`,
 `--aligner decipher|mafft`, `--threads 4`, `--exclude-self` (leave out database entries
 with the same name as a query), `--config config.yaml`. Instead of `--query`,
-`--query-set <set folder>` uses a saved set (see MANUAL.md 2.5), as the window does. Start the window once
-first (or run `Rscript launcher/setup.R`) so the packages are installed.
+`--query-set <set folder>` uses a saved set (see MANUAL.md 2.5), as the window does.
+
+Runs on saved sets (MANUAL.md 2.1 and 3.7; a set folder can be given several times):
+
+    # search new sequences only against one or more sets, instead of a database
+    Rscript cli/fhinumerics --query my.fasta --set-db sets/Outbreak --out results/
+    # compare the sequences of sets with each other (no search), optionally over a region
+    Rscript cli/fhinumerics --within-set sets/Outbreak --region 2001-3000 --out results/
+
+`--region FROM-TO` is in alignment columns of the set's `aligned.fasta` (as the Alignment
+page numbers them). The folder `set/` inside a run folder of a run on sets is itself a set
+folder, so `--within-set <run folder>/set` repeats that run.
+
+Start the window once first (or run `Rscript launcher/setup.R`) so the packages are
+installed.
 
 ## For developers
 

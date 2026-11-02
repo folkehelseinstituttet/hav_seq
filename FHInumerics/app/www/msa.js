@@ -6,7 +6,10 @@
 // In the window, R sends 'msa_data' (names, letters, metadata) when the alignment changes
 // and 'msa_view' (anchor, classes, row statistics, column masks) when the anchor changes;
 // the page sends back input$msa_anchor_pick (right-click "Use as anchor") and
-// input$msa_window (what is on screen, for the PDF and FASTA downloads). msa_html() in
+// input$msa_window (what is on screen, for the PDF and FASTA downloads). For a set
+// (data.region_pick), dragging along the column numbers marks a region: input$msa_region
+// (alignment columns, for "compare within the set", decision 0013); R sends 'msa_region'
+// back to show or clear it. msa_html() in
 // R/msa.R puts this file in a standalone page and calls fhiMsa.load() instead.
 (function() {
   var FILL = ['', '#e6550d', '#c6dbef', '#2166ac', '#7b3294', '#e6e9ed', '#e6e9ed', '#cfd4da', '#fff3cd'];
@@ -20,8 +23,8 @@
       MUTED = '#656d76';
 
   var S = {data: null, view: null, opts: {}, shown: [], order: [], px: 1, start: 0, top: 0, selected: -1,
-           varOnly: false, hideGap: false, mark: -1, inserts: [], sort: null, fitted: true};
-  var el = {};
+           varOnly: false, hideGap: false, mark: -1, inserts: [], sort: null, fitted: true, region: null};
+  var el = {}, HINT = '';
   var arr = function(x) { return x == null ? [] : (Array.isArray(x) ? x : [x]); };
   var plural = function(n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); };
 
@@ -30,6 +33,8 @@
     if (!root || el.root) return;
     el.root = root;
     var standalone = !!S.opts.standalone;
+    HINT = 'Mouse wheel = zoom &middot; drag = move &middot; double-click = whole alignment &middot; ' +
+      'point = details &middot; click a name = choose that row' + (standalone ? '' : ' &middot; right-click a name = use it as anchor');
     root.innerHTML =
       '<div class="msa-bar">' +
       '<label>Sort rows <select class="msa-sort"></select></label>' +
@@ -41,9 +46,7 @@
       '<button type="button" data-act="prev">&#9664; Previous difference</button>' +
       '<button type="button" data-act="next">Next difference &#9654;</button>' +
       '<span class="msa-range"></span></div>' +
-      '<div class="msa-hint">Mouse wheel = zoom &middot; drag = move &middot; double-click = whole alignment &middot; ' +
-      'point = details &middot; click a name = choose that row' +
-      (standalone ? '' : ' &middot; right-click a name = use it as anchor') + '</div>' +
+      '<div class="msa-hint"></div>' +
       '<div class="msa-message"></div>' +
       '<canvas class="msa-overview"></canvas><div class="msa-legend"></div>' +
       '<div class="msa-frame"><canvas class="msa-canvas"></canvas><div class="msa-vscroll"><div></div></div></div>' +
@@ -55,6 +58,8 @@
     el.menu = root.querySelector('.msa-menu');
     el.msg = root.querySelector('.msa-message');
     el.range = root.querySelector('.msa-range');
+    el.hint = root.querySelector('.msa-hint');
+    el.hint.innerHTML = HINT;
     el.legend = root.querySelector('.msa-legend');
     el.sort = root.querySelector('.msa-sort');
     el.gotoInput = root.querySelector('.msa-goto');
@@ -112,6 +117,8 @@
       el.sort.value = S.sort;
     }
     el.msg.textContent = '';
+    S.region = null;
+    el.hint.innerHTML = HINT + (d && d.region_pick ? ' &middot; drag along the column numbers = mark a region to compare' : '');
   }
 
   function setView(v) {
@@ -300,6 +307,7 @@
     ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, AXIS_H, mainW(), S.height - AXIS_H); ctx.clip();
     drawCompared(ctx, AXIS_H, ANCHOR_H + n * ROW_H);
     drawInserts(ctx);
+    drawRegion(ctx, ANCHOR_H + n * ROW_H);
     if (S.mark >= 0) {
       var k = S.shown.indexOf(S.mark);
       if (k >= 0) {
@@ -308,6 +316,7 @@
       }
     }
     ctx.restore();
+    drawRegion(ctx, 0, true);
     var kFirst = Math.floor(S.start), kLast = Math.min(S.shown.length, Math.ceil(S.start + mainW() / S.px));
     el.range.textContent = S.shown.length ? 'columns ' + S.data.cols[S.shown[kFirst]] + '–' +
       S.data.cols[S.shown[kLast - 1]] + ' of ' + S.data.cols[S.data.ncol - 1] +
@@ -401,6 +410,30 @@
   }
 
   // Grey wash over columns outside the compared region (run results).
+  // A region marked on the ruler (sets): a blue band over the rows and on the ruler.
+  // `ruler`: the bar on the column ruler (drawn outside the clipped rows).
+  function drawRegion(ctx, h, ruler) {
+    var r = S.region;
+    if (!r) return;
+    var k0 = -1, k1 = -1;
+    for (var k = 0; k < S.shown.length; k++) {
+      var col = S.data.cols[S.shown[k]];
+      if (col >= r.from && col <= r.to) { if (k0 < 0) k0 = k; k1 = k; }
+    }
+    if (k0 < 0) return;
+    var x0 = X(k0), x1 = X(k1 + 1);
+    ctx.fillStyle = ACCENT;
+    if (ruler) {
+      var a = Math.max(LABEL_W, x0), b = Math.min(LABEL_W + mainW(), x1);
+      if (b > a) ctx.fillRect(a, AXIS_H - 4, Math.max(2, b - a), 4);
+      return;
+    }
+    ctx.fillRect(x0 - 1, AXIS_H, 2, h);
+    ctx.fillRect(x1 - 1, AXIS_H, 2, h);
+    ctx.fillStyle = 'rgba(9, 105, 218, 0.10)';
+    ctx.fillRect(x0, AXIS_H, x1 - x0, h);
+  }
+
   function drawCompared(ctx, y, h) {
     var cmp = S.data.compared;
     if (!cmp) return;
@@ -494,9 +527,27 @@
 
   function pointerdown(e) {
     if (!S.view || e.button !== 0) return;
+    if (onRuler(e) && S.shown.length) { S.rdrag = {k: columnAtX(e), moved: false}; return; }
     S.drag = {x: e.clientX, y: e.clientY, start: S.start, top: S.top, moved: false, ev: e};
   }
+  // The column ruler of a set's alignment: dragging there marks a region (not a move).
+  function onRuler(e) {
+    var rect = el.canvas.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
+    return !S.opts.standalone && S.data && S.data.region_pick && y < AXIS_H && x >= LABEL_W;
+  }
+  function columnAtX(e) {
+    var rect = el.canvas.getBoundingClientRect();
+    return Math.min(S.shown.length - 1, Math.max(0, Math.floor(S.start + (e.clientX - rect.left - LABEL_W) / S.px)));
+  }
   function dragmove(e) {
+    if (S.rdrag) {
+      var k = columnAtX(e);
+      if (k !== S.rdrag.k) S.rdrag.moved = true;
+      if (!S.rdrag.moved) return;
+      S.region = {from: S.data.cols[S.shown[Math.min(k, S.rdrag.k)]], to: S.data.cols[S.shown[Math.max(k, S.rdrag.k)]]};
+      draw();
+      return;
+    }
     if (!S.drag) return;
     var dx = e.clientX - S.drag.x, dy = e.clientY - S.drag.y;
     if (Math.abs(dx) + Math.abs(dy) > 3) S.drag.moved = true;
@@ -509,6 +560,13 @@
     draw();
   }
   function dragend() {
+    if (S.rdrag) {
+      if (S.rdrag.moved && S.region && window.Shiny && Shiny.setInputValue) {
+        Shiny.setInputValue('msa_region', {from: S.region.from, to: S.region.to}, {priority: 'event'});
+      }
+      S.rdrag = null;
+      return;
+    }
     if (S.drag && !S.drag.moved) click(S.drag.ev);
     S.drag = null;
     el.canvas.classList.remove('dragging');
@@ -565,6 +623,7 @@
   }
 
   function hover(e) {
+    el.canvas.style.cursor = S.view && onRuler(e) ? 'col-resize' : '';
     if (!S.view || (S.drag && S.drag.moved)) return;
     var p = at(e);
     if (p.part !== 'cell' && p.part !== 'name') { el.tip.style.display = 'none'; return; }
@@ -658,6 +717,7 @@
       Shiny.addCustomMessageHandler('msa_view', function(v) { setView(v); });
       Shiny.addCustomMessageHandler('msa_options', setOptions);
       Shiny.addCustomMessageHandler('msa_png', savePicture);
+      Shiny.addCustomMessageHandler('msa_region', function(r) { S.region = r && r.from ? r : null; draw(); });
     });
   }
   window.fhiMsa = {

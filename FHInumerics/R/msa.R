@@ -259,6 +259,7 @@ msa_payload <- function(a) {
        query = rownames(a$m) %in% a$queries, dropped = rownames(a$m) %in% a$dropped,
        revcomp = rownames(a$m) %in% a$revcomp,
        compared = if (is.null(a$compared)) NULL else paste(as.integer(a$compared), collapse = ""),
+       region_pick = isTRUE(a$region_pick),   # a set: a region can be dragged on the ruler (0013)
        meta = lapply(seq_len(nrow(meta)), function(i) {
          vals <- vapply(meta[i, , drop = FALSE], function(x) if (is.na(x)) "?" else as.character(x), "")
          as.list(vals)
@@ -415,7 +416,13 @@ msa_load_run_folder <- function(folder, label, manifest, region = NULL, dropped 
   snp <- if (file.exists(snp_file)) as.matrix(utils::read.delim(snp_file, row.names = 1, check.names = FALSE)) else NULL
   compared <- if (length(region)) { r <- as.integer(strsplit(region, "-")[[1]]); r[1]:r[2] } else NULL
   msa_load(aln, label, meta = meta, queries = queries, dropped = dropped %||% character(0), compared = compared,
-           revcomp = unlist(manifest$reverse_complemented), order = order, snp = snp, note = note)
+           revcomp = run_turned(manifest), order = order, snp = snp, note = note)
+}
+
+# The sequences of a run that are reverse-complemented in its alignment: the queries turned
+# by the search, and (runs on sets, 0013) set members turned to one orientation.
+run_turned <- function(manifest) {
+  unique(c(unlist(manifest$reverse_complemented), unlist(manifest$database$reverse_complemented)))
 }
 
 # Tip labels from top to bottom, as the tree is drawn (and the SNP table is ordered).

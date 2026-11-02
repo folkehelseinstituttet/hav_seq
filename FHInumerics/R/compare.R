@@ -3,6 +3,9 @@
 # SNP matrix (ape) -> neighbour-joining tree (ape, midpoint rooted).
 # With several queries, the steps after the search run for all queries together and
 # for each query alone (its own neighbours, compared over its own length).
+# Sets (decision 0013) can be the database searched, or be compared with each other
+# without a search (compare_within()); the steps from trimming on are the same
+# (compare_alignment()).
 #
 # Used by both the Shiny app (app.R) and the command line (cli/fhinumerics),
 # so both give identical results. Everything runs on this computer, inside R or
@@ -24,10 +27,18 @@ ALL_QUERIES <- "All queries together"
 
 ALIGNERS <- c("MAFFT (--auto, pymafft)" = "mafft", "DECIPHER AlignSeqs (R only)" = "decipher")
 
+# Three modes (decision 0013), recorded as `mode` in run_manifest.yaml:
+#   database      queries searched against a database from config.yaml
+#   set_database  queries searched against sets: `db` from set_db() (R/sets.R)
+#   within_set    no queries and no search: the sequences of sets compared with each other,
+#                 `within` from set_within() (R/sets.R); `queries` and `db` are not used
 # `input`: where the queries came from (a set, R/sets.R set_queries()), for the manifest.
 run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
-                        progress = function(step, detail = NULL) NULL, log = message, input = NULL) {
+                        progress = function(step, detail = NULL) NULL, log = message, input = NULL,
+                        within = NULL) {
   settings <- utils::modifyList(DEFAULT_SETTINGS, settings)
+  if (!is.null(within)) return(compare_within(within, cfg, settings, out_dir, progress, log))
+  mode <- if (is.null(db$from_sets)) "database" else "set_database"
   if (length(queries) > 50) stop("At most 50 query sequences per run.", call. = FALSE)
   if (!settings$aligner %in% ALIGNERS) stop("Unknown aligner '", settings$aligner, "'.", call. = FALSE)
   started <- Sys.time()
@@ -44,6 +55,11 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
   progress("Preparing database")
   ref <- prepare_db(db, cfg, settings$search, log = log)
   meta <- read_metadata(db)
+  if (mode == "set_database") {
+    log("Searching only ", db$name, " (", length(ref$seqs), " sequences)")
+    turned <- db$from_sets$turned
+    if (length(turned)) log("Turned (reverse complement) to the orientation of the other sequences: ", paste(turned, collapse = ", "))
+  }
 
   # Internal IDs (Q1, Q2, ...) keep tool input free of odd characters. A query with the
   # name of a database sequence gets "_query" added, so the two do not share a name in
@@ -156,8 +172,9 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
     user = Sys.info()[["user"]],
     computer = Sys.info()[["nodename"]],
     app_version = app_version(),
-    database = list(name = db$name, fasta = db$fasta, metadata = db$metadata,
-                    fasta_md5 = ref$checksum, n_sequences = length(ref$seqs)),
+    mode = mode,
+    database = c(list(name = db$name, fasta = db$fasta, metadata = db$metadata,
+                      fasta_md5 = ref$checksum, n_sequences = length(ref$seqs)), db$from_sets$manifest),
     queries = as.list(names(queries)),
     input = input,
     renamed = as.list(stats::setNames(q_ids$id[clash], q_ids$given[clash])),
@@ -171,15 +188,17 @@ run_compare <- function(queries, db, cfg, settings = list(), out_dir = NULL,
         else list(error = v$error))
     }),
     tools = tool_versions(cfg, settings),
-    method = method_text(settings)
+    method = method_text(settings, mode)
   )
   manifest <- Filter(Negate(is.null), manifest)   # no `input` unless the queries came from a set
   yaml::write_yaml(manifest, file.path(out_dir, "run_manifest.yaml"))
+  # Sets searched: a copy of them (as given, before turning) in the run folder.
+  if (mode == "set_database") set_write(db$from_sets$set, file.path(out_dir, "set"))
   log("Finished in ", round(as.numeric(difftime(Sys.time(), started, units = "secs"))), " s")
 
   utils::write.table(ties, file.path(out_dir, "closest_summary.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
   list(out_dir = out_dir, hits = hits_out, ties = ties, queries = q_ids$id, views = views, manifest = manifest,
-       display_columns = display_columns(db, meta))
+       display_columns = display_columns(db, meta), mode = mode, set = db$from_sets$set)
 }
 
 # Alignment, SNP matrix and tree for one set of queries (internal IDs `q`) and their
@@ -208,12 +227,22 @@ compare_set <- function(q, label, q_internal, q_ids, kept, ref, meta, cfg, setti
     write_fasta(stats::setNames(as.character(aln), names(aln)), file.path(work, "aligned.fasta"))
   }
   aln <- read_alignment(file.path(work, "aligned.fasta"))
+  all_ids <- rbind(q_ids[, c("internal", "id")], ref$ids[ref$ids$internal %in% names(aln), c("internal", "id")])
+  c(compare_alignment(aln, q, all_ids, meta, settings, out_dir, trim_to_queries(aln, q), progress, log),
+    list(label = label, neighbours = length(neighbour_ids)))
+}
 
-  # Trim to the region every query covers, so all comparisons use the same positions.
-  trimmed <- trim_to_queries(aln, q)
+# Trimming, SNP matrix and tree of one alignment (internal names; `ids` maps them to real
+# names), and its result files in `out_dir`. `q`: the queries (red; each gets its own base
+# numbers for the hover box); `number`: whose base numbers are kept (default the queries).
+# `trimmed`: from trim_to_queries() or trim_to_region().
+compare_alignment <- function(aln, q, ids, meta, settings, out_dir, trimmed, progress = function(step) NULL,
+                              log = message, number = q) {
+  work <- file.path(out_dir, "work")
+  dir.create(work, recursive = TRUE, showWarnings = FALSE)
+  real <- function(x) ids$id[match(x, ids$internal)]
   if (!is.null(trimmed$dropped)) {
-    log("WARNING: dropped (covers < 50% of the compared region): ",
-        paste(ref$ids$id[match(trimmed$dropped, ref$ids$internal)], collapse = ", "))
+    log("WARNING: dropped (covers < 50% of the compared region): ", paste(real(trimmed$dropped), collapse = ", "))
   }
   aln_t <- trimmed$aln
   log("Compared region: ", nchar(aln_t[1]), " alignment columns")
@@ -222,7 +251,7 @@ compare_set <- function(q, label, q_internal, q_ids, kept, ref, meta, cfg, setti
 
   # Each query's own base number for every column left after trimming (for the hover
   # text that lists differing positions).
-  positions <- lapply(q, function(id) cumsum(strsplit(aln[[id]], "")[[1]] != "-")[trimmed$cols])
+  positions <- lapply(number, function(id) cumsum(strsplit(aln[[id]], "")[[1]] != "-")[trimmed$cols])
 
   # ---- 4. SNP distances ---------------------------------------------------------
   # Ambiguity codes count only when they cannot match; N and gaps never (R/snps.R).
@@ -244,14 +273,11 @@ compare_set <- function(q, label, q_internal, q_ids, kept, ref, meta, cfg, setti
   }
 
   # ---- Results with real names --------------------------------------------------
-  all_ids <- rbind(q_ids[, c("internal", "id")], ref$ids[ref$ids$internal %in% names(aln), c("internal", "id")])
-  real <- function(x) all_ids$id[match(x, all_ids$internal)]
-
   dimnames(snp) <- list(real(rownames(snp)), real(colnames(snp)))
   dimnames(sites) <- list(real(rownames(sites)), real(colnames(sites)))
   if (!is.null(tree)) tree$tip.label <- real(tree$tip.label)
 
-  tips <- data.frame(id = real(names(aln_t)), is_query = names(aln_t) %in% q_ids$internal)
+  tips <- data.frame(id = real(names(aln_t)), is_query = names(aln_t) %in% q)
   tip_meta <- merge(tips, meta, by = "id", all.x = TRUE, sort = FALSE)
 
   utils::write.table(cbind(id = rownames(snp), as.data.frame(snp, check.names = FALSE)),
@@ -269,14 +295,116 @@ compare_set <- function(q, label, q_internal, q_ids, kept, ref, meta, cfg, setti
   names(aln_full) <- real(names(aln))
   write_fasta(aln_full, file.path(out_dir, "alignment_untrimmed.fasta"))
 
-  names(positions) <- real(q)
-  list(label = label, queries = real(q), snp = snp, sites = sites, tree = tree, tip_meta = tip_meta,
+  names(positions) <- real(number)
+  list(queries = real(q), snp = snp, sites = sites, tree = tree, tip_meta = tip_meta,
        aln = aln_real, positions = positions, aln_full = aln_full, compared_cols = trimmed$cols,
-       aln_meta = merge(data.frame(id = names(aln_full), is_query = names(aln) %in% q_ids$internal), meta,
+       aln_meta = merge(data.frame(id = names(aln_full), is_query = names(aln) %in% q), meta,
                         by = "id", all.x = TRUE, sort = FALSE),
        compared_region = sprintf("%d-%d", min(trimmed$cols), max(trimmed$cols)),
        dropped = if (is.null(trimmed$dropped)) character(0) else real(trimmed$dropped),
-       neighbours = length(neighbour_ids), compared_columns = nchar(aln_t[1]), out_dir = out_dir)
+       limited_by = real(trimmed$limited_by), compared_columns = nchar(aln_t[1]), out_dir = out_dir)
+}
+
+# ---- Compare the sequences of a set with each other (decision 0013 (b)) ----------------
+SET_COMPARE_MAX <- 300   # sequences per comparison within sets
+
+# No search: the set's alignment (aligned first, as "Align the set", when it is missing or
+# out of date), trimmed to the columns every sequence covers or to settings$region, then
+# SNPs and tree as in runs. `w` is from set_within() (R/sets.R). The run folder gets a copy
+# of the set compared (set/, a set folder with the alignment used).
+compare_within <- function(w, cfg, settings, out_dir = NULL, progress = function(step, detail = NULL) NULL,
+                           log = message) {
+  started <- Sys.time()
+  s <- w$set
+  keys <- s$members$key
+  n <- length(keys)
+  if (n < 2) stop("At least 2 sequences are needed to compare a set.", call. = FALSE)
+  if (n > SET_COMPARE_MAX) {
+    stop(sprintf("%s has %d sequences; at most %d can be compared with each other. On the Sets page, click up to %d rows and press Compare the chosen with each other.",
+                 w$what %||% "The set", n, SET_COMPARE_MAX, SET_COMPARE_MAX), call. = FALSE)
+  }
+  if (is.null(out_dir)) {
+    out_dir <- file.path(cfg$output_dir, paste0(format(started, "%Y%m%d-%H%M%S"), "_", gsub("[^A-Za-z0-9._-]+", "_", s$name)))
+  }
+  dir.create(file.path(out_dir, "work"), recursive = TRUE, showWarnings = FALSE)
+  log("Output folder: ", out_dir)
+  log("Comparing the ", n, " sequences of ", s$name, " with each other (no database search)")
+  names_in <- set_names(s$members)
+  ids <- data.frame(internal = paste0("S", seq_len(n)), id = names_in)
+  red <- ids$internal[s$members$source %in% c("query", "file")]
+
+  progress("Preparing the alignment")
+  al <- set_alignment(s)
+  aligned_now <- is.null(al) || length(al$missing) > 0
+  if (aligned_now) {
+    log("The set has no alignment of all these sequences: aligning them now, as Align the set does")
+    progress(sprintf("Aligning the sequences (DECIPHER, %d sequences)", n))
+    s$alignment <- set_align(stats::setNames(unname(s$seqs[keys]), keys), settings$threads)[c("aln", "turned", "made", "from", "method", "versions")]
+    s$history <- c(s$history, sprintf("%s aligned (%d sequences) for a comparison within the set", s$alignment$made, n))
+    al <- set_alignment(s)
+  } else {
+    log("Using the set's alignment (", al$from, ", ", al$made, ")")
+  }
+  if (length(al$turned)) log("Turned (reverse complement) for the alignment: ", paste(al$turned, collapse = ", "))
+  aln <- stats::setNames(unname(al$aln[names_in]), ids$internal)
+  write_fasta(aln, file.path(out_dir, "work", "aligned.fasta"))
+
+  region <- w$region %||% settings$region
+  trimmed <- if (is.null(region)) {
+    trim_to_queries(aln, ids$internal, no_overlap = "These sequences do not overlap; pick a region in the Alignment page.")
+  } else {
+    r <- parse_region(region, nchar(aln[[1]]))
+    log("Region: alignment columns ", region)
+    trim_to_region(aln, r[1], r[2])
+  }
+  settings$region <- region
+  meta <- set_table(s)
+  meta <- meta[, setdiff(names(meta), "database_md5"), drop = FALSE]
+  view <- compare_alignment(aln, red, ids, meta, settings, out_dir, trimmed,
+                            progress = function(step) progress(step), log = log, number = ids$internal)
+  view$label <- s$name
+  view$within <- TRUE
+  view$sequences <- n
+
+  progress("Writing results")
+  set_write(s, file.path(out_dir, "set"))
+  turned <- al$turned
+  manifest <- list(
+    created = format(started, "%Y-%m-%d %H:%M:%S"),
+    user = Sys.info()[["user"]],
+    computer = Sys.info()[["nodename"]],
+    app_version = app_version(),
+    mode = "within_set",
+    input = w$input,
+    alignment = list(file = "set/aligned.fasta", md5 = unname(tools::md5sum(file.path(out_dir, "set", "aligned.fasta"))),
+                     made_in_this_run = aligned_now, from = al$from, made = al$made, method = al$method,
+                     versions = al$versions, reverse_complemented = as.list(turned)),
+    queries = as.list(view$queries),
+    reverse_complemented = as.list(turned),
+    settings = settings[intersect(c("bootstrap", "threads", "region"), names(settings))],
+    results = list(list(queries = s$name, folder = ".", sequences = n, compared_columns = view$compared_columns,
+                        compared_region = view$compared_region, dropped = as.list(view$dropped),
+                        limited_by = if (is.null(region)) as.list(view$limited_by))),
+    tools = tool_versions(cfg, settings),
+    method = method_text(settings, "within_set")
+  )
+  manifest$results[[1]] <- Filter(Negate(is.null), manifest$results[[1]])
+  yaml::write_yaml(manifest, file.path(out_dir, "run_manifest.yaml"))
+  log("Finished in ", round(as.numeric(difftime(Sys.time(), started, units = "secs"))), " s")
+  empty <- data.frame(query = character(0))
+  list(out_dir = out_dir, hits = empty, ties = empty, queries = view$queries, views = stats::setNames(list(view), s$name),
+       manifest = manifest, display_columns = setdiff(names(meta), "id"), mode = "within_set", set = s,
+       aligned_now = aligned_now)
+}
+
+# "FROM-TO" (alignment columns) -> c(from, to), checked against the alignment length.
+parse_region <- function(region, ncol) {
+  r <- suppressWarnings(as.integer(strsplit(trimws(region), "\\s*-\\s*")[[1]]))
+  if (length(r) != 2 || anyNA(r) || r[1] < 1 || r[2] > ncol || r[1] >= r[2]) {
+    stop(sprintf("The region '%s' is not two alignment columns FROM-TO between 1 and %d (e.g. 2001-3000).", region, ncol),
+         call. = FALSE)
+  }
+  r
 }
 
 # Neighbour-joining tree (ape): BIONJ on TN93 distances (pairwise deletion), with
@@ -294,31 +422,71 @@ nj_tree <- function(dna, bootstrap = TRUE) {
 
 # Keep the columns between the latest query start and the earliest query end;
 # then drop all-gap columns and sequences covering < 50% of that region.
-# Returns the trimmed alignment, the dropped sequences and the kept columns' numbers.
-trim_to_queries <- function(aln, query_ids) {
+# Returns the trimmed alignment, the dropped sequences, the kept columns' numbers and the
+# queries whose start or end limits the region (`limited_by`).
+trim_to_queries <- function(aln, query_ids, no_overlap = paste(
+  "The query sequences cover different parts of the genome and do not overlap,",
+  "so they cannot be compared together. Each query's own result is still made.")) {
   chars <- do.call(rbind, strsplit(aln, ""))
   rownames(chars) <- names(aln)
   spans <- t(vapply(query_ids, function(q) range(which(chars[q, ] != "-")), numeric(2)))
   from <- max(spans[, 1])
   to <- min(spans[, 2])
-  if (from >= to) {
-    stop("The query sequences cover different parts of the genome and do not overlap, ",
-         "so they cannot be compared together. Each query's own result is still made.", call. = FALSE)
+  if (from >= to) stop(no_overlap, call. = FALSE)
+  limited_by <- query_ids[spans[, 1] == from | spans[, 2] == to]
+  trimmed <- trim_columns(chars, from:to, keep = query_ids)
+  trimmed$limited_by <- limited_by
+  trimmed
+}
+
+# Keep alignment columns from..to (a region picked by the user); then drop all-gap columns
+# and every sequence covering < 50% of the region (with A/C/G/T).
+trim_to_region <- function(aln, from, to) {
+  chars <- do.call(rbind, strsplit(aln, ""))
+  rownames(chars) <- names(aln)
+  out <- trim_columns(chars, from:to)
+  if (length(out$aln) < 2) {
+    stop(sprintf(paste("Fewer than 2 sequences have bases in at least half of columns %d-%d.",
+                       "Pick a larger region in the Alignment page, or another part of the genome."), from, to),
+         call. = FALSE)
   }
-  cols <- from:to
+  out
+}
+
+# Columns `cols` of a character matrix; drop all-gap columns, then the sequences (except
+# `keep`) with A/C/G/T in < 50% of what is left.
+trim_columns <- function(chars, cols, keep = character(0)) {
   chars <- chars[, cols, drop = FALSE]
   cols <- cols[colSums(chars != "-") > 0]
   chars <- chars[, colSums(chars != "-") > 0, drop = FALSE]
   acgt <- matrix(chars %in% c("A", "C", "G", "T"), nrow = nrow(chars))
   covered <- rowMeans(acgt)
-  drop <- setdiff(rownames(chars)[covered < 0.5], query_ids)
+  drop <- setdiff(rownames(chars)[covered < 0.5], keep)
   chars <- chars[!rownames(chars) %in% drop, , drop = FALSE]
   out <- apply(chars, 1, paste, collapse = "")
   list(aln = out, dropped = if (length(drop)) drop else NULL, cols = cols)
 }
 
-method_text <- function(settings) {
-  paste(
+method_text <- function(settings, mode = "database") {
+  tree <- paste(
+    "Tree: ape::bionj on TN93 distances (pairwise deletion), negative branch lengths set to 0,",
+    "+ 100 bootstraps (ape::boot.phylo, seed 1) when bootstrap is on and >= 4 sequences;",
+    "midpoint rooted (phangorn::midpoint).")
+  snps <- paste(
+    "SNPs: phangorn::dist.hamming(ratio = FALSE, exclude = 'none'): a position counts when the two",
+    "bases cannot be the same (IUPAC ambiguity codes count only when they cannot match; N and gaps",
+    "never count).")
+  if (mode == "within_set") {
+    return(paste(
+      "Compare within sets: no database search. The sequences of the set(s) are compared with each other",
+      "in the set's alignment (when it has all of them), else aligned in the run: DECIPHER OrientNucleotides",
+      "(reverse complement only, against 6 HAV genomes, one per subgenotype), then DECIPHER AlignSeqs.",
+      if (is.null(settings$region)) "Alignment trimmed to the columns covered by every sequence."
+      else paste0("Alignment trimmed to the region (alignment columns ", settings$region, "); sequences with A/C/G/T",
+                  " in < 50% of it left out."),
+      snps, tree))
+  }
+  text <- paste(
     switch(settings$search,
       decipher = "Search: DECIPHER IndexSeqs (k = 11) + SearchIndex, both strands, up to 500 hits per query, each aligned with AlignPairs;",
       blast = "Search: blastn via rBLAST (max_target_seqs 500, max_hsps 1);"),
@@ -332,13 +500,11 @@ method_text <- function(settings) {
     "Alignment trimmed to the columns covered by every query.",
     "With several queries, alignment, SNPs and tree are made for all queries together (all their",
     "neighbours) and for each query alone (its own neighbours, trimmed to its own length).",
-    "SNPs: phangorn::dist.hamming(ratio = FALSE, exclude = 'none'): a position counts when the two",
-    "bases cannot be the same (IUPAC ambiguity codes count only when they cannot match; N and gaps",
-    "never count).",
-    "Tree: ape::bionj on TN93 distances (pairwise deletion), negative branch lengths set to 0,",
-    "+ 100 bootstraps (ape::boot.phylo, seed 1) when bootstrap is on and >= 4 sequences;",
-    "midpoint rooted (phangorn::midpoint)."
+    snps, tree
   )
+  if (mode != "set_database") return(text)
+  paste("Database: the sequences of the set(s) only, turned to one orientation (DECIPHER OrientNucleotides,",
+        "reverse complement only, against 6 HAV genomes, one per subgenotype), in name order.", text)
 }
 
 tool_versions <- function(cfg, settings) {

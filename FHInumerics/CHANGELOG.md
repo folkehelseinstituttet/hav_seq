@@ -5,6 +5,32 @@ run's `run_manifest.yaml`. Newest first.
 
 ## Unreleased
 
+- **Runs on sets** (Outbreak detection, a new *Compare* choice at the top):
+  *New sequences with sets only* searches the new sequences only against one or more
+  sets instead of a database (the sets' sequences are turned to one orientation first;
+  the search index is kept per set content in `cache/set_<checksum>/`); *The sequences of
+  sets with each other* compares the sequences of one or more sets (or rows chosen on the
+  Sets page, at most 300) without a search: the set's alignment, or aligned in the run as
+  *Align the set* does, trimmed to the columns every sequence covers or to a region,
+  then SNP table and tree. Several sets are taken together (a sample in both counts once;
+  new column `in_set`). Sets need not be saved: every run on sets keeps a copy of the
+  set(s) used in `set/` in its run folder. Database runs give the same results as before.
+- Alignment page: with a set shown, drag along the column numbers to mark a region and
+  press *Compare the set over columns ...*.
+- Sets page: *Compare the sequences with each other*, *Search new sequences against this
+  set*, and *Search a database with these sequences* (was *Use in Outbreak detection*).
+- Comparisons within sets: point at any number of the SNP table to see which positions
+  differ (made when pointed at); sequences left out or limiting the region are named
+  above the tabs; with more than 100 sequences and bootstrap on, the window asks first.
+- `run_manifest.yaml` has a `mode` (`database`, `set_database`, `within_set`); runs on
+  sets record the sets (checksums), the alignment used and the region.
+- Command line: `--set-db <set folder>` and `--within-set <set folder> [--region FROM-TO]`
+  (each can be given several times).
+- The paste box starts with an example (a public demo sequence) so a first run can be
+  tried at once.
+- Fixed: notes on Outbreak detection could stay greyed out after switching page and
+  mode at once.
+
 - New page **Sets**: collect sequences from databases (one or more), runs, the Alignment
   page and FASTA files into a set, with *Add to set* buttons on the Database viewer
   (chosen samples), Outbreak detection (SNP table, tree, the whole result) and Alignment

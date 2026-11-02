@@ -23,19 +23,42 @@ $(function() {
     $('.fhi-menu .nav-link').removeClass('active');
     $('.fhi-menu .nav-link[data-page=\"' + page + '\"]').addClass('active');
     Shiny.setInputValue('page', page);
+    recheckOutputs();
   }
+  // Shiny pauses outputs it thinks are hidden, and (Shiny 1.14) notices that an output in a
+  // conditionalPanel was shown only when outputs are bound. After a page or mode switch,
+  // have it look at every output again: Shiny.bindAll() on an empty element does that.
+  function recheckOutputs() {
+    setTimeout(function() { Shiny.bindAll(document.getElementById('fhi-cell-tip')); }, 300);
+  }
+  $(document).on('change', 'input[name=mode]', recheckOutputs);
   $(document).on('click', '.fhi-menu .nav-link', function(e) { e.preventDefault(); setPage($(this).data('page')); });
   $(document).on('shiny:connected', function() { setPage('outbreak'); });
   Shiny.addCustomMessageHandler('set_page', setPage);
   // SNP table: pointing at a number with a data-tip shows that text in a box next to
   // the pointer (on the side with the most room).
-  $(document).on('mouseenter', 'td[data-tip]', function() { $('#fhi-cell-tip').text($(this).attr('data-tip')).show(); });
-  $(document).on('mousemove', 'td[data-tip]', function(e) {
+  var lastPointer = null;
+  function placeTip(e) {
     var tip = $('#fhi-cell-tip'), right = e.clientX > window.innerWidth / 2, below = e.clientY < window.innerHeight / 2;
     tip.css({left: right ? '' : e.clientX + 14, right: right ? window.innerWidth - e.clientX + 14 : '',
              top: below ? e.clientY + 14 : '', bottom: below ? '' : window.innerHeight - e.clientY + 14});
+  }
+  $(document).on('mouseenter', 'td[data-tip]', function() { $('#fhi-cell-tip').text($(this).attr('data-tip')).show(); });
+  $(document).on('mousemove', 'td[data-tip], td.fhi-ask', function(e) { lastPointer = e; placeTip(e); });
+  $(document).on('mouseleave', 'td[data-tip], td.fhi-ask', function() { $('#fhi-cell-tip').hide(); askCell = null; });
+  // Within sets: a number's hover text is asked for when it is first pointed at, then kept.
+  var askCell = null;
+  $(document).on('mouseenter', '#snp_table td.fhi-ask:not([data-tip])', function(e) {
+    askCell = this;
+    lastPointer = e;
+    Shiny.setInputValue('snp_hover', {row: $(this).attr('data-pair-row'), col: $(this).attr('data-pair-col')}, {priority: 'event'});
   });
-  $(document).on('mouseleave', 'td[data-tip]', function() { $('#fhi-cell-tip').hide(); });
+  Shiny.addCustomMessageHandler('snp_tip', function(x) {
+    if (!askCell || $(askCell).attr('data-pair-row') !== x.row || $(askCell).attr('data-pair-col') !== x.col) return;
+    $(askCell).attr('data-tip', x.text);
+    $('#fhi-cell-tip').text(x.text).show();
+    if (lastPointer) placeTip(lastPointer);
+  });
   // SNP table: a click on a name chooses that row for the Alignment page; a click on a
   // number in a query's row or column opens that pair there.
   $(document).on('click', '#snp_table td.fhi-pick', function() {
@@ -69,18 +92,31 @@ menu <- tags$ul(class = "nav nav-pills flex-column fhi-menu mb-2",
     tags$a(class = paste("nav-link", if (PAGES[[label]] == "outbreak") "active"),
            href = "#", `data-page` = PAGES[[label]], label))))
 
+# A public demo sequence in the paste box, so a first run can be tried at once.
+EXAMPLE_FASTA <- paste(readLines(file.path(root, "data", "example_query.fasta"), warn = FALSE), collapse = "\n")
+
+# Three ways to compare (decision 0013); each shows only the inputs it needs.
 outbreak_inputs <- tagList(
-  textAreaInput("fasta_text", "Paste sequence(s) in FASTA format", rows = 8, width = "100%",
-                placeholder = ">sample1\nTTCAAGAGGGGTCTCCGG...\n>sample2\n..."),
-  uiOutput("sent_note"),
-  fileInput("fasta_file", "...or choose a FASTA file", accept = c(".fa", ".fasta", ".fas", ".fna", ".txt")),
-  uiOutput("run_set_ui"),
-  selectInput("db", "Database", choices = names(cfg$databases)),
-  sliderInput("n_neighbours", "Closest sequences per query", 5, 50, defaults$n_neighbours, step = 5),
+  radioButtons("mode", "Compare", c("New sequences with a database" = "database",
+                                    "New sequences with sets only" = "set_database",
+                                    "The sequences of sets with each other" = "within_set")),
+  conditionalPanel("input.mode !== 'within_set'",
+    textAreaInput("fasta_text", "Paste sequence(s) in FASTA format", value = EXAMPLE_FASTA, rows = 8, width = "100%",
+                  placeholder = ">sample1\nTTCAAGAGGGGTCTCCGG...\n>sample2\n..."),
+    uiOutput("example_note"),
+    uiOutput("sent_note"),
+    fileInput("fasta_file", "...or choose a FASTA file", accept = c(".fa", ".fasta", ".fas", ".fna", ".txt")),
+    uiOutput("run_set_ui")),
+  conditionalPanel("input.mode === 'database'", selectInput("db", "Database", choices = names(cfg$databases))),
+  conditionalPanel("input.mode === 'set_database'", uiOutput("db_sets_ui"), uiOutput("db_sets_note")),
+  conditionalPanel("input.mode === 'within_set'", uiOutput("within_ui"), uiOutput("within_note")),
+  conditionalPanel("input.mode !== 'within_set'",
+    sliderInput("n_neighbours", "Closest sequences per query", 5, 50, defaults$n_neighbours, step = 5)),
   accordion(open = FALSE, accordion_panel(
     "More settings",
-    sliderInput("min_coverage", "Minimum % of the query a match must cover", 50, 100, defaults$min_coverage, step = 5),
-    selectInput("aligner", "Alignment", ALIGNERS, defaults$aligner),
+    conditionalPanel("input.mode !== 'within_set'",
+      sliderInput("min_coverage", "Minimum % of the query a match must cover", 50, 100, defaults$min_coverage, step = 5),
+      selectInput("aligner", "Alignment", ALIGNERS, defaults$aligner)),
     checkboxInput("bootstrap", "Bootstrap support for the tree (100 replicates)", defaults$bootstrap)
   )),
   textInput("out_dir", "Save results in", cfg$output_dir),
@@ -165,9 +201,14 @@ sets_inputs <- tagList(
     "Or press", em("Add to set"), "on the Database viewer, Outbreak detection or Alignment page."),
   h6("Alignment"),
   uiOutput("set_align_ui"),
-  h6("Compare with a database", class = "mt-3"),
-  actionButton("set_use", "Use in Outbreak detection", class = "btn-sm"),
-  p(class = "small text-muted mt-1", "Uses the rows chosen in the table, or the whole set (at most 50)."),
+  h6("Analyse in Outbreak detection", class = "mt-3"),
+  div(class = "d-grid gap-1",
+      actionButton("set_within", "Compare the sequences with each other", class = "btn-sm"),
+      actionButton("set_as_db", "Search new sequences against this set", class = "btn-sm"),
+      actionButton("set_use", "Search a database with these sequences", class = "btn-sm")),
+  p(class = "small text-muted mt-1",
+    "Comparing with each other and searching a database use the rows chosen in the table, or the whole set",
+    "(at most 300 to compare, 50 to search a database)."),
   h6("Download", class = "mt-3"),
   div(class = "d-flex gap-2 flex-wrap",
       downloadButton("set_dl_fasta", "Sequences (FASTA)", class = "btn-sm"),
@@ -216,7 +257,7 @@ ui <- page_sidebar(
     .fhi-tip td { padding: 0 6px 0 0; vertical-align: top; }
     .fhi-tip td:first-child { color: #666; white-space: nowrap; }
     #fhi-cell-tip { position: fixed; display: none; white-space: pre-line; }
-    td[data-tip]:hover { box-shadow: inset 0 0 0 3px #ff7f00; }
+    td[data-tip]:hover, td.fhi-ask:hover { box-shadow: inset 0 0 0 3px #ff7f00; }
     td.fhi-flag { position: relative; }
     td.fhi-flag::after { content: ''; position: absolute; top: 0; right: 0; border-style: solid;
                          border-width: 0 9px 9px 0; border-color: transparent #ff7f00 transparent transparent; }
@@ -244,7 +285,7 @@ ui <- page_sidebar(
   ),
   navset_hidden(
     id = "main",
-    nav_panel_hidden("outbreak", uiOutput("view_ui"), uiOutput("add_result_ui"), navset_card_tab(
+    nav_panel_hidden("outbreak", uiOutput("run_head"), uiOutput("view_ui"), uiOutput("add_result_ui"), navset_card_tab(
       id = "tabs",
       nav_panel("Tree",
         layout_columns(col_widths = c(3, 6, 3),
@@ -322,51 +363,252 @@ server <- function(input, output, session) {
       "From the Database viewer: each sample's own database entry is left out of its closest matches.")
   })
 
+  # Run comparison. Comparing many sequences of sets with bootstrap asks first (it can take
+  # minutes, and the window waits).
   observeEvent(input$run, {
+    if (identical(input$mode, "within_set") && isTRUE(input$bootstrap)) {
+      n <- tryCatch(nrow(set_within(sets()[within_ids()], within_rows())$set$members), error = function(e) 0)
+      if (n > 100 && n <= SET_COMPARE_MAX) {
+        return(showModal(modalDialog(title = "Bootstrap for many sequences?",
+          sprintf(paste("The tree with 100 bootstraps for %d sequences can take several minutes (about 1.5 minutes",
+                        "for 280 complete genomes on a fast computer), and the window waits meanwhile. Without",
+                        "bootstrap the tree takes seconds; the SNP table is the same."), n),
+          footer = tagList(modalButton("Cancel"), actionButton("run_noboot", "Run without bootstrap"),
+                           actionButton("run_boot", "Run with bootstrap", class = "btn-primary")))))
+      }
+    }
+    do_run()
+  })
+  observeEvent(input$run_noboot, { removeModal(); do_run(bootstrap = FALSE) })
+  observeEvent(input$run_boot, { removeModal(); do_run() })
+
+  do_run <- function(bootstrap = input$bootstrap) {
+    mode <- input$mode %||% "database"
     lines <- character(0)
     log <- function(...) lines <<- c(lines, paste0(format(Sys.time(), "%H:%M:%S  "), ...))
+    within_from <- NULL
     res <- tryCatch({
-      s <- run_set()
-      if (!is.null(s)) {
-        q <- set_queries(s, input$db, set_input()$keys)
-        queries <- q$seqs
-        exclude <- q$exclude_self
-        log("Queries from the set '", s$name, "'")
-      } else {
-        text <- if (use_file()) {
-          paste(readLines(input$fasta_file$datapath, warn = FALSE), collapse = "\n")
-        } else input$fasta_text
-        queries <- parse_fasta_text(text)
-        exclude <- from_viewer()
-      }
-      log("Queries: ", paste(names(queries), collapse = ", "))
       cfg$output_dir <- clean_path(input$out_dir)
       settings <- list(n_neighbours = input$n_neighbours, min_coverage = input$min_coverage,
-                       aligner = input$aligner, bootstrap = input$bootstrap,
-                       search = defaults$search, threads = defaults$threads,
-                       exclude_self = exclude)
-      withProgress(message = "Running", value = 0, {
-        steps <- 3 + 3 * (length(queries) + (length(queries) > 1))   # see run_compare()
-        run_compare(queries, cfg$databases[[input$db]], cfg, settings, log = log,
-                    progress = function(step, detail = NULL) incProgress(1 / steps, step, detail),
-                    input = if (!is.null(s)) q$input)
-      })
+                       aligner = input$aligner, bootstrap = bootstrap,
+                       search = defaults$search, threads = defaults$threads)
+      if (mode == "within_set") {
+        ids <- within_ids()
+        if (!length(ids)) stop("Choose one or more sets under Sets to compare.", call. = FALSE)
+        w <- set_within(sets()[ids], within_rows(), region_for_run())
+        within_from <- list(id = if (length(ids) == 1 && is.null(within_rows())) ids, keys = w$set$members$key)
+        withProgress(message = "Running", value = 0, {
+          run_compare(NULL, NULL, cfg, settings, log = log, within = w,
+                      progress = function(step, detail = NULL) incProgress(1 / 5, step, detail))
+        })
+      } else {
+        withProgress(message = "Running", value = 0, {
+          db <- if (mode == "set_database") {
+            ids <- db_set_ids()
+            if (!length(ids)) stop("Choose one or more sets under Search only these sets.", call. = FALSE)
+            incProgress(0, "Preparing the sets")
+            set_db(sets()[ids], cfg, defaults$threads)
+          } else cfg$databases[[input$db]]
+          s <- run_set()
+          if (!is.null(s)) {
+            q <- set_queries(s, db$name, set_input()$keys, db_set = db$from_sets$set)
+            queries <- q$seqs
+            settings$exclude_self <- q$exclude_self
+            log("Queries from the set '", s$name, "'")
+          } else {
+            text <- if (use_file()) {
+              paste(readLines(input$fasta_file$datapath, warn = FALSE), collapse = "\n")
+            } else input$fasta_text
+            queries <- parse_fasta_text(text)
+            settings$exclude_self <- from_viewer()
+          }
+          log("Queries: ", paste(names(queries), collapse = ", "))
+          steps <- 3 + 3 * (length(queries) + (length(queries) > 1))   # see run_compare()
+          run_compare(queries, db, cfg, settings, log = log,
+                      progress = function(step, detail = NULL) incProgress(1 / steps, step, detail),
+                      input = if (!is.null(s)) q$input)
+        })
+      }
     }, error = function(e) {
       log("ERROR: ", conditionMessage(e))
       showNotification(conditionMessage(e), type = "error", duration = NULL)
       NULL
     })
     log_lines(lines)
-    if (!is.null(res)) {
-      result(res)
-      db <- cfg$databases[[input$db]]
-      updateSelectInput(session, "colour_by", choices = c("none", res$display_columns),
-                        selected = db$default_colour %||% "none")
-      updateCheckboxGroupInput(session, "label_cols", choices = res$display_columns,
-                               selected = intersect(db$default_labels %||% character(0), res$display_columns),
-                               inline = TRUE)
-      showNotification(paste("Done. Results saved in", res$out_dir), type = "message", duration = 8)
+    if (is.null(res)) return()
+    result(res)
+    # A set aligned for this run keeps that alignment (the Alignment page then shows it).
+    kept <- FALSE
+    if (isTRUE(res$aligned_now) && !is.null(within_from$id)) {
+      s <- sets()[[within_from$id]]
+      if (!is.null(s) && identical(s$members$key, within_from$keys)) {
+        s$alignment <- res$set$alignment
+        s$history <- c(s$history, sprintf("%s aligned (%d sequences) for a comparison within the set",
+                                          s$alignment$made, nrow(s$members)))
+        s$dirty <- TRUE
+        put_set(within_from$id, s)
+        kept <- TRUE
+      }
     }
+    db <- result_database(res)
+    updateSelectInput(session, "colour_by", choices = c("none", res$display_columns),
+                      selected = if (isTRUE(db$default_colour %in% res$display_columns)) db$default_colour else "none")
+    updateCheckboxGroupInput(session, "label_cols", choices = res$display_columns,
+                             selected = intersect(db$default_labels %||% character(0), res$display_columns),
+                             inline = TRUE)
+    showNotification(paste0("Done. Results saved in ", res$out_dir,
+                            if (kept) ". The set was aligned for this run and keeps that alignment."),
+                     type = "message", duration = 8)
+  }
+  # The database whose display settings (colour, labels) a result uses: the one searched, or
+  # for runs on sets the first database (in config.yaml) the set's samples come from.
+  result_database <- function(res) {
+    if (identical(res$mode, "database")) return(cfg$databases[[res$manifest$database$name]] %||% list())
+    from <- unique(stats::na.omit(res$set$members$database))
+    Filter(function(d) d$name %in% from, cfg$databases)[1][[1]] %||% list()
+  }
+
+  # The example in the paste box (a public demo sequence): say so while it is there.
+  output$example_note <- renderUI({
+    if (use_file() || !is.null(run_set()) || !identical(trimws(input$fasta_text), trimws(EXAMPLE_FASTA))) return(NULL)
+    p(class = "small text-muted",
+      "An example is filled in (a public demo sequence: KY782331.1 with 3 changes), so you can press",
+      em("Run comparison"), "to try. Replace it with your own sequences.")
+  })
+
+  # ---- Sets as the database, and sets compared with each other (0013) ----
+  # Chosen values of a set list -> set ids. Saved sets chosen there are opened in the window
+  # (without becoming the open set).
+  set_ids_of <- function(values) {
+    ids <- vapply(values %||% character(0), function(v) {
+      if (startsWith(v, "saved:")) open_folder(sub("^saved:", "", v), open = FALSE) %||% "" else v
+    }, "")
+    unique(ids[nzchar(ids) & ids %in% names(sets())])
+  }
+  set_picker <- function(id, label, selected) {
+    ch <- set_choices()
+    if (!length(ch)) {
+      return(p(class = "small text-muted", "No sets yet. Make one on the", em("Sets"), "page, or press",
+               em("Add to set"), "on another page."))
+    }
+    selectizeInput(id, label, ch, selected, multiple = TRUE,
+                   options = list(placeholder = "Choose one or more sets", plugins = list("remove_button")))
+  }
+  db_sets_sel <- reactiveVal(character(0))
+  db_set_ids <- reactive(intersect(db_sets_sel(), names(sets())))
+  output$db_sets_ui <- renderUI(set_picker("db_sets", "Search only these sets", isolate(db_sets_sel())))
+  observeEvent(input$db_sets, db_sets_sel(set_ids_of(input$db_sets)), ignoreNULL = FALSE)
+  output$db_sets_note <- renderUI({
+    req(length(set_choices()))
+    ids <- db_set_ids()
+    if (!length(ids)) return(p(class = "small text-muted", "Choose one or more sets: only their sequences are searched,",
+                               "instead of a database."))
+    m <- set_merge(sets()[ids])$members
+    p(class = "small text-muted", sprintf("Searching only these %d sequences%s, instead of a database.", nrow(m),
+                                          if (length(ids) > 1) " (a sample in several sets counts once)" else ""))
+  })
+
+  within_sel <- reactiveVal(character(0))
+  within_keys <- reactiveVal(NULL)   # rows chosen on the Sets page: list(id, keys)
+  within_ids <- reactive(intersect(within_sel(), names(sets())))
+  within_rows <- reactive({
+    k <- within_keys()
+    if (!is.null(k) && identical(within_ids(), k$id)) intersect(k$keys, sets()[[k$id]]$members$key)
+  })
+  output$within_ui <- renderUI(set_picker("within_sets", "Sets to compare", isolate(within_sel())))
+  observeEvent(input$within_sets, within_sel(set_ids_of(input$within_sets)), ignoreNULL = FALSE)
+  # From the Sets page or the Alignment page: compare these sets (or rows of one).
+  use_within <- function(ids, keys = NULL) {
+    within_sel(ids)
+    within_keys(if (length(keys)) list(id = ids, keys = keys))
+    updateRadioButtons(session, "mode", selected = "within_set")
+    updateSelectizeInput(session, "within_sets", selected = ids)
+    session$sendCustomMessage("set_page", "outbreak")
+  }
+  output$within_note <- renderUI({
+    req(length(set_choices()))
+    ids <- within_ids()
+    if (!length(ids)) {
+      return(p(class = "small text-muted", "Choose one or more sets. Their sequences are aligned and compared with",
+               "each other (tree and SNP table); no database is searched."))
+    }
+    w <- tryCatch(set_within(sets()[ids], within_rows(), region_for_run()), error = function(e) e)
+    if (inherits(w, "error")) return(div(class = "alert alert-warning small py-1 px-2", conditionMessage(w)))
+    n <- nrow(w$set$members)
+    st <- set_alignment_status(w$set)
+    aligned <- !is.null(st) && !length(st$missing)
+    tagList(
+      p(class = "small text-muted mb-1", sprintf("%d sequences%s are compared with each other; no database is searched.", n,
+                                                 if (!is.null(within_rows())) " (the rows chosen on the Sets page)" else
+                                                   if (length(ids) > 1) " (a sample in several sets counts once)" else "")),
+      if (n < 2) div(class = "alert alert-warning small py-1 px-2", "At least 2 sequences are needed.")
+      else if (n > SET_COMPARE_MAX) div(class = "alert alert-warning small py-1 px-2", sprintf(
+        "At most %d sequences can be compared with each other. On the Sets page, click up to %d rows and press Compare the chosen with each other.",
+        SET_COMPARE_MAX, SET_COMPARE_MAX)),
+      if (aligned) p(class = "small text-muted mb-1", sprintf("Uses the set's alignment (%s, %s).", w$set$alignment$from,
+                                                              w$set$alignment$made))
+      else if (length(ids) > 1) p(class = "small text-muted mb-1", "The sets are aligned together when you press Run comparison.")
+      else tagList(p(class = "small text-muted mb-1", aligning_text(ids) %||% paste(
+        "The set has no alignment of all these sequences: they are aligned first when you press Run comparison,",
+        "or press Align the set to do it now in the background.")),
+        actionButton("within_align", "Align the set", class = "btn-sm mb-2")),
+      if (!is.null(region_for_run())) {
+        p(class = "small mb-1", sprintf("Compared over columns %s of the set's alignment (picked on the Alignment page). ",
+                                        region_for_run()), actionLink("within_region_clear", "Use the columns every sequence covers"))
+      } else {
+        p(class = "small text-muted mb-1", "Compared over the columns every sequence covers. To compare another part of",
+          "the genome, show the set on the Alignment page and drag along the column numbers.")
+      }
+    )
+  })
+  observeEvent(input$within_align, align_set(within_ids()[1]))
+  observeEvent(input$within_region_clear, aln_region(NULL))
+
+  # A region dragged on the Alignment page's ruler, for one set and its alignment as shown.
+  aln_region <- reactiveVal(NULL)
+  set_sig <- function(s) paste(s$alignment$made, paste(s$members$key, collapse = "\t"))
+  region_of <- function(id) {
+    r <- aln_region()
+    s <- if (!is.null(id) && length(id) == 1) sets()[[id]]
+    if (is.null(r) || is.null(s) || !identical(r$id, id) || !identical(r$sig, set_sig(s))) NULL else r$region
+  }
+  region_for_run <- reactive(if (length(within_ids()) == 1 && is.null(within_rows())) region_of(within_ids()))
+
+  # What the shown results are: for runs on sets, what was compared or searched (0013).
+  output$run_head <- renderUI({
+    res <- result()
+    if (is.null(res) || identical(res$mode, "database")) return(NULL)
+    few <- function(x) paste0(paste(utils::head(x, 10), collapse = ", "), if (length(x) > 10) sprintf(" and %d more", length(x) - 10))
+    if (res$mode == "set_database") {
+      d <- res$manifest$database
+      turned <- unlist(d$reverse_complemented)
+      return(div(class = "msa-mode mb-2", "Searched only ", strong(sub("^Sets?: ", "", d$name)),
+                 sprintf(" (%d sequences), not a database.", d$n_sequences),
+                 if (length(turned)) paste0(" Turned to the orientation of the others (reverse complement): ", few(turned), ".")))
+    }
+    v <- res$views[[1]]
+    region <- res$manifest$settings$region
+    turned <- unlist(res$manifest$reverse_complemented)
+    tagList(
+      div(class = "msa-mode mb-2", sprintf("The %d sequences of ", v$sequences), strong(v$label),
+          sprintf(" compared with each other (no database search), over %d columns (%s of the alignment): %s.",
+                  v$compared_columns, v$compared_region,
+                  if (is.null(region)) "the columns every sequence covers" else "the region picked")),
+      if (length(v$dropped)) div(class = "alert alert-warning py-1 px-2", sprintf(
+        "Left out of the SNP table and tree: %s (bases in less than half of the region).", few(v$dropped))),
+      if (is.null(region) && length(v$limited_by)) div(class = "msa-note mb-2", sprintf(
+        "The compared columns are limited by where %s %s or %s. To compare more of the genome, pick a region on the Alignment page.",
+        few(v$limited_by), if (length(v$limited_by) == 1) "starts" else "start", if (length(v$limited_by) == 1) "ends" else "end")),
+      if (length(turned)) div(class = "msa-note mb-2", paste0(
+        "Turned (reverse complement) for the alignment, so numbered on the reverse complement: ", few(turned), "."))
+    )
+  })
+  # No search within sets: no Closest matches.
+  observeEvent(result(), {
+    if (identical(result()$mode, "within_set")) {
+      if (identical(input$tabs, "Closest matches")) nav_select("tabs", "Tree")
+      nav_hide("tabs", "Closest matches")
+    } else nav_show("tabs", "Closest matches")
   })
 
   # With several queries, there is a result for all queries together and one for each
@@ -409,12 +651,15 @@ server <- function(input, output, session) {
   output$run_set_note <- renderUI({
     s <- run_set()
     if (is.null(s)) return(NULL)
-    q <- tryCatch(set_queries(s, input$db, set_input()$keys), error = function(e) e)
+    searched <- identical(input$mode, "set_database") && length(db_set_ids())
+    q <- tryCatch(set_queries(s, input$db, set_input()$keys, db_set = if (searched) set_merge(sets()[db_set_ids()])),
+                  error = function(e) e)
     if (inherits(q, "error")) return(div(class = "alert alert-warning small py-1 px-2", conditionMessage(q)))
+    where <- if (searched) "in the sets searched" else "from this database"
     p(class = "small text-muted", sprintf("Using %d sequences of the set '%s'%s, instead of the pasted text or file.",
                                           length(q$seqs), s$name, if (length(set_input()$keys)) " (chosen on the Sets page)" else ""),
-      if (q$n_own == 1) "The sample from this database leaves out its own entry from its closest matches."
-      else if (q$n_own) sprintf("The %d samples from this database leave out their own entry from their closest matches.", q$n_own))
+      if (q$n_own == 1) sprintf("The sample also %s leaves out its own entry from its closest matches.", where)
+      else if (q$n_own) sprintf("The %d samples also %s leave out their own entry from their closest matches.", q$n_own, where))
   })
 
   view <- reactive({
@@ -428,8 +673,8 @@ server <- function(input, output, session) {
   # The shown result as a viewer alignment, knowing where its rows come from (for sets).
   run_alignment <- function() {
     res <- result()
-    a <- msa_from_result(view(), unlist(res$manifest$reverse_complemented))
-    a$origin <- msa_run_origin(res$manifest, basename(res$out_dir), cfg$databases)
+    a <- msa_from_result(view(), run_turned(res$manifest))
+    a$origin <- msa_run_origin(res$manifest, basename(res$out_dir), cfg$databases, set = res$set)
     a
   }
   add_run_rows <- function(ids) {
@@ -484,17 +729,39 @@ server <- function(input, output, session) {
   output$snp_note <- renderUI({
     v <- view()
     if (!is.null(v$error)) return(view_error())
+    within <- isTRUE(v$within)
     tagList(
       p(sprintf(paste("SNP differences over %d aligned positions. A position counts when the two bases cannot be the same:",
                       "ambiguity codes count only when they do not fit (K = G/T differs from A, M = A/C does not); N and gaps never count.",
-                      "Rows and columns follow the tree order. Queries are in red."), v$compared_columns)),
+                      "Rows and columns follow the tree order. %s"), v$compared_columns,
+                if (within) "Queries and file sequences of the set are in red." else "Queries are in red.")),
       p(class = "small text-muted",
-        "Point at a number in a query's row or column to see which positions differ.",
+        if (within) "Point at any number to see which positions differ." else
+          "Point at a number in a query's row or column to see which positions differ.",
         "An orange corner marks pairs that also differ by gaps, Ns or ambiguity codes that fit (not counted as SNPs)."))
+  })
+  # Within sets the hover text is made when pointing at a number (every pair can be pointed
+  # at; making all of them first would take minutes for large sets).
+  snp_tip_data <- reactive({
+    v <- view()
+    req(isTRUE(v$within))
+    chars <- do.call(rbind, strsplit(toupper(v$aln), ""))
+    rownames(chars) <- names(v$aln)
+    list(chars = chars, bits = base_bits(v$aln))
+  })
+  observeEvent(input$snp_hover, {
+    v <- view()
+    r <- input$snp_hover$row
+    k <- input$snp_hover$col
+    req(isTRUE(v$within), r %in% names(v$aln), k %in% names(v$aln), r != k)
+    d <- snp_tip_data()
+    text <- pair_tip(v, d$chars, d$bits, r, k, run_turned(result()$manifest), 20)$text
+    session$sendCustomMessage("snp_tip", list(row = r, col = k, text = text))
   })
   output$snp_table <- DT::renderDT({
     v <- view()
     snp <- req(v$snp)
+    within <- isTRUE(v$within)
     if (!is.null(v$tree)) {
       d <- ggtree::fortify(v$tree)
       ord <- d$label[d$isTip][order(d$y[d$isTip], decreasing = TRUE)]
@@ -509,11 +776,20 @@ server <- function(input, output, session) {
       paste(query_cols, collapse = ",")))
     # Hover text of the query cells (R/snps.R), attached to each cell as it is drawn;
     # cells where the pair also differs by gaps, Ns or ambiguity codes get a corner mark.
-    tips <- snp_tips(v, unlist(result()$manifest$reverse_complemented))
+    # Within sets: every number cell asks for its text when pointed at (fhi-ask).
+    if (within) {
+      fl <- snp_flags(v$aln)
+      hit <- which(fl, arr.ind = TRUE)
+      tips <- list(text = list(), flagged = stats::setNames(rep(TRUE, nrow(hit)),
+                                                             paste(rownames(fl)[hit[, 1]], colnames(fl)[hit[, 2]], sep = "\t")))
+    } else {
+      tips <- snp_tips(v, run_turned(result()$manifest))
+    }
     cell_js <- DT::JS(sprintf(
-      "(function() { var tips = %s, flags = %s, cols = %s; return function(td, cellData, rowData, row, col) { var key = rowData[0] + '\\t' + cols[col]; if (col === 0) { td.classList.add('fhi-pick'); td.setAttribute('data-name', rowData[0]); } if (tips[key]) { td.setAttribute('data-tip', tips[key]); td.setAttribute('data-pair-row', rowData[0]); td.setAttribute('data-pair-col', cols[col]); } if (flags[key]) td.classList.add('fhi-flag'); }; })()",
+      "(function() { var tips = %s, flags = %s, cols = %s, ask = %s; return function(td, cellData, rowData, row, col) { var key = rowData[0] + '\\t' + cols[col]; if (col === 0) { td.classList.add('fhi-pick'); td.setAttribute('data-name', rowData[0]); } if (tips[key] || (ask && col > 0 && rowData[0] !== cols[col])) { if (tips[key]) td.setAttribute('data-tip', tips[key]); else td.classList.add('fhi-ask'); td.setAttribute('data-pair-row', rowData[0]); td.setAttribute('data-pair-col', cols[col]); } if (flags[key]) td.classList.add('fhi-flag'); }; })()",
       jsonlite::toJSON(as.list(tips$text), auto_unbox = TRUE),
-      jsonlite::toJSON(as.list(tips$flagged[tips$flagged]), auto_unbox = TRUE), jsonlite::toJSON(colnames(df))))
+      jsonlite::toJSON(as.list(tips$flagged[tips$flagged]), auto_unbox = TRUE), jsonlite::toJSON(colnames(df)),
+      tolower(within)))
     # All rows on one page (no paging), so every sequence can be reached and chosen.
     table <- DT::datatable(df, fillContainer = FALSE, rownames = FALSE, selection = "none",
                            options = list(scrollX = TRUE, paging = FALSE, dom = "t", headerCallback = header_js,
@@ -521,12 +797,15 @@ server <- function(input, output, session) {
     table <- DT::formatStyle(table, colnames(snp),
       backgroundColor = DT::styleInterval(brks - 0.5, c("white", "#08519c", "#3182bd", "#6baed6", "#9ecae1", "#c6dbef", "white")),
       color = DT::styleInterval(c(-0.5, 2.5), c("black", "white", "black")))
+    # (Without queries - a set of database samples compared within - styleEqual() gives broken JS.)
+    if (!length(v$queries)) return(table)
     DT::formatStyle(table, "sequence", fontWeight = DT::styleEqual(v$queries, "bold", default = "normal"),
                     color = DT::styleEqual(v$queries, "#d7301f", default = "black"),
                     backgroundColor = DT::styleEqual(v$queries, "#fde0dd", default = "white"))
   })
 
   output$ties_note <- renderUI({
+    req(!identical(result()$mode, "within_set"))
     ties <- view_rows(req(result())$ties)
     many <- ties[ties$n_equally_close > ties$n_shown, ]
     if (!NROW(many)) return(NULL)
@@ -536,6 +815,7 @@ server <- function(input, output, session) {
           many$n_equally_close[i], many$query[i], many$best_pident[i], many$n_shown[i]))))
   })
   output$hits_table <- DT::renderDT({
+    req(!identical(result()$mode, "within_set"))
     hits <- view_rows(req(result())$hits)
     DT::datatable(hits, fillContainer = FALSE, rownames = FALSE, filter = "top",
                   options = list(scrollX = TRUE, pageLength = 25))
@@ -845,15 +1125,16 @@ server <- function(input, output, session) {
       res <- req(result())
       v <- res$views[[req(input$aln_view)]]
       req(v, is.null(v$error))
-      a <- msa_from_result(v, unlist(res$manifest$reverse_complemented))
-      a$origin <- msa_run_origin(res$manifest, basename(res$out_dir), cfg$databases)
+      a <- msa_from_result(v, run_turned(res$manifest))
+      a$origin <- msa_run_origin(res$manifest, basename(res$out_dir), cfg$databases, set = res$set)
       list(key = paste("run", res$out_dir, v$label), a = a)
     } else if (src == "folder") {
       f <- req(aln_folder())
       i <- req(match(input$aln_folder_result, names(f)))
       a <- req(aln_try(msa_load_run_folder(f[[i]], paste0(basename(attr(f, "dir")), ": ", names(f)[i]),
                                            attr(f, "manifest"), attr(f, "regions")[[i]], attr(f, "dropped")[[i]])))
-      a$origin <- msa_run_origin(attr(f, "manifest"), basename(attr(f, "dir")), cfg$databases)
+      a$origin <- msa_run_origin(attr(f, "manifest"), basename(attr(f, "dir")), cfg$databases,
+                                 set = run_folder_set(attr(f, "dir")))
       list(key = paste("folder", f[[i]]), a = a)
     } else if (src == "file") {
       file <- req(input$aln_file)
@@ -890,6 +1171,7 @@ server <- function(input, output, session) {
     sig <- paste(id, s$name, s$alignment$made, paste(set_names(s$members), collapse = "\t"), sep = "\n")
     if (identical(sig, isolate(aln_set_a())$sig)) return()
     a <- msa_from_set(s)
+    if (!is.null(a)) a$region_pick <- TRUE   # drag on the ruler: a region to compare the set over (0013)
     wait <- if (is.null(a)) {
       if (nrow(s$members) < 2) "This set has fewer than 2 sequences: add more on the Sets page or with Add to set." else
         tagList("This set is not aligned yet. Press ", em("Align the set"),
@@ -980,6 +1262,51 @@ server <- function(input, output, session) {
   observe(session$sendCustomMessage("msa_options", list(variable = isTRUE(input$aln_variable),
                                                         hide_gaps = isTRUE(input$aln_hide_gaps))))
 
+  # A region dragged on the ruler of a set's alignment (0013): kept with that set and its
+  # alignment as shown; shown again whenever the set is shown.
+  shown_set_id <- reactive(if (identical(input$aln_source, "set") && isTRUE(aln_shown()$a$region_pick)) input$aln_set)
+  observeEvent(input$msa_region, {
+    id <- shown_set_id()
+    s <- if (!is.null(id)) sets()[[id]]
+    if (is.null(s)) return()
+    aln_region(list(id = id, sig = set_sig(s), region = sprintf("%d-%d", input$msa_region$from, input$msa_region$to)))
+  })
+  observe(priority = 1, {
+    aln_shown()
+    r <- region_of(shown_set_id())
+    session$sendCustomMessage("msa_region", if (is.null(r)) list() else {
+      x <- as.integer(strsplit(r, "-")[[1]])
+      list(from = x[1], to = x[2])
+    })
+  })
+  observeEvent(input$aln_region_clear, aln_region(NULL))
+  observeEvent(input$aln_region_compare, {
+    id <- shown_set_id()
+    r <- region_of(id)
+    if (is.null(r)) return()
+    use_within(id)
+    showNotification(sprintf("The set '%s' will be compared over columns %s. Press Run comparison.", sets()[[id]]$name, r),
+                     type = "message", duration = 8)
+  })
+
+  # The region line in the blue box when a set is shown.
+  region_line <- function() {
+    id <- shown_set_id()
+    s <- sets()[[id]]
+    r <- region_of(id)
+    st <- set_alignment_status(s)
+    if (is.null(r)) {
+      return(div(class = "msa-note", "To compare the set over a part of the genome: drag along the column numbers",
+                 "above the alignment to mark a region."))
+    }
+    x <- as.integer(strsplit(r, "-")[[1]])
+    div(class = "msa-note d-flex align-items-center gap-2 flex-wrap",
+        span(sprintf("Region: columns %d–%d (%d columns).", x[1], x[2], x[2] - x[1] + 1L)),
+        if (length(st$missing)) span("Align the set first: some of its sequences are not in this alignment.")
+        else actionButton("aln_region_compare", sprintf("Compare the set over columns %d–%d", x[1], x[2]),
+                          class = "btn-sm btn-primary"),
+        actionButton("aln_region_clear", "Clear region", class = "btn-sm"))
+  }
   output$aln_status <- renderUI({
     b <- tryCatch(aln_base(), error = function(e) NULL)
     if (is.null(b)) {
@@ -1010,6 +1337,7 @@ server <- function(input, output, session) {
         nrow(a$m), n_all, ncol(a$m), region %||% ""))),
       mode,
       if (!is.null(s$pick$note)) note(s$pick$note),
+      if (isTRUE(a$region_pick)) region_line(),
       if (length(a$dropped)) note(sprintf(
         "%d sequences (grey names) cover less than half of the compared region and were left out of the SNP table and tree.",
         length(a$dropped))),
@@ -1064,7 +1392,8 @@ server <- function(input, output, session) {
     ids <- snp_picked()
     if (!length(ids)) {
       return(p(class = "small text-muted", "Click names to choose sequences for the Alignment page.",
-               "Click a number in a query's row or column to see that pair in the Alignment page."))
+               if (isTRUE(view()$within)) "Click a number to see that pair in the Alignment page." else
+                 "Click a number in a query's row or column to see that pair in the Alignment page."))
     }
     div(class = "d-flex align-items-center gap-2 mb-2", strong(length(ids), "chosen"),
         actionButton("snp_show", "Show in Alignment", class = "btn-sm btn-primary"),
@@ -1078,7 +1407,7 @@ server <- function(input, output, session) {
   observeEvent(input$snp_pair, {
     r <- input$snp_pair$row
     k <- input$snp_pair$col
-    q <- if (r %in% view()$queries) r else k
+    q <- if (r %in% view()$queries || !k %in% view()$queries) r else k   # as pair_tip() numbers it
     other <- setdiff(c(r, k), q)
     pending_pair <<- list(query = q, other = other)
     show_in_alignment(c(q, other), anchor = q, note = sprintf(
@@ -1155,11 +1484,11 @@ server <- function(input, output, session) {
   saved_sets <- reactiveVal(list_saved())
   open_set <- reactive(if (!is.null(open_id())) sets()[[open_id()]])
   put_set <- function(id, s) { all <- sets(); all[[id]] <- s; sets(all) }
-  add_set <- function(s) {
+  add_set <- function(s, open = TRUE) {
     n_made <<- n_made + 1L
     id <- paste0("set", n_made)
     put_set(id, s)
-    open_id(id)
+    if (open) open_id(id)
     id
   }
   make_new_set <- function() {
@@ -1168,12 +1497,17 @@ server <- function(input, output, session) {
     while (paste("Set", k) %in% used) k <- k + 1
     add_set(set_new(paste("Set", k), save_in = default_sets_dir()[length(default_sets_dir())]))
   }
-  open_folder <- function(path) {
+  # Open a saved set folder (or the set already opened from it); returns its id. With
+  # open = FALSE it is only loaded into the window, not made the open set.
+  open_folder <- function(path, open = TRUE) {
     path <- normalizePath(path)
     have <- Filter(function(s) identical(s$folder, path), sets())
-    if (length(have)) return(open_id(names(have)[1]))
+    if (length(have)) {
+      if (open) open_id(names(have)[1])
+      return(names(have)[1])
+    }
     s <- aln_try(set_load(path))
-    if (!is.null(s)) add_set(s)
+    if (!is.null(s)) add_set(s, open = open)
   }
 
   # Add candidates (R/sets.R) to the open set, or to a new one.
@@ -1359,7 +1693,8 @@ server <- function(input, output, session) {
     if (!n || is.null(open_set())) return(NULL)
     div(class = "d-flex align-items-center gap-2 mb-2", strong(n, "chosen"),
         actionButton("set_remove", "Remove from the set", class = "btn-sm btn-danger"),
-        actionButton("set_use_rows", "Use the chosen in Outbreak detection", class = "btn-sm"))
+        actionButton("set_within_rows", "Compare the chosen with each other", class = "btn-sm"),
+        actionButton("set_use_rows", "Search a database with the chosen", class = "btn-sm"))
   })
   use_open_set <- function() {
     s <- open_set()
@@ -1368,12 +1703,34 @@ server <- function(input, output, session) {
     q <- aln_try(set_queries(s, NULL, keys))
     if (is.null(q)) return()
     use_set_in_run(open_id(), if (length(keys)) keys)
+    if (identical(input$mode, "within_set")) updateRadioButtons(session, "mode", selected = "database")
     session$sendCustomMessage("set_page", "outbreak")
     showNotification(sprintf("%d sequences of the set '%s' will be compared. Choose the database and press Run comparison.",
                              length(q$seqs), s$name), type = "message", duration = 8)
   }
   observeEvent(input$set_use, use_open_set())
   observeEvent(input$set_use_rows, use_open_set())
+  # The open set (or its chosen rows) compared with each other, or as the database (0013).
+  within_open_set <- function() {
+    s <- open_set()
+    if (is.null(s)) return(showNotification("No set is open.", type = "warning"))
+    keys <- s$members$key[input$set_table_rows_selected]
+    use_within(open_id(), keys)
+    showNotification(sprintf("%d sequences of the set '%s' will be compared with each other. Press Run comparison.",
+                             if (length(keys)) length(keys) else nrow(s$members), s$name), type = "message", duration = 8)
+  }
+  observeEvent(input$set_within, within_open_set())
+  observeEvent(input$set_within_rows, within_open_set())
+  observeEvent(input$set_as_db, {
+    s <- open_set()
+    if (is.null(s)) return(showNotification("No set is open.", type = "warning"))
+    db_sets_sel(open_id())
+    updateRadioButtons(session, "mode", selected = "set_database")
+    updateSelectizeInput(session, "db_sets", selected = open_id())
+    session$sendCustomMessage("set_page", "outbreak")
+    showNotification(sprintf("Only the set '%s' will be searched. Paste or choose new sequences and press Run comparison.",
+                             s$name), type = "message", duration = 8)
+  })
   output$set_table <- DT::renderDT({
     s <- req(open_set())
     tab <- set_table(s)
