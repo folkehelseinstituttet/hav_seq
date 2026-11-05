@@ -15,3 +15,8 @@ That dataset is FHI's copy of the NextClade community dataset
 `community/masphl-bioinformatics/hav/vp1-2b-junction` (GenBank, accessed 2025-02-03)
 with FHI lineage labels added. Public sequences only. Most are VP1-2B fragments
 (349-531 bp); about 10% are complete genomes (~7.4 kb).
+
+`../orientation_panel.fasta` holds six of these complete genomes, one per subgenotype
+(IA EU526089.1, IB LC128713.1, IIA MH933766.1, IIB AY644670.1, IIIA AB279733.1, IIIB
+AB279735.1). Sets use them only as references to find sequences that are reverse
+complements before aligning (`set_align()` in `R/sets.R`); they are never added to a set.

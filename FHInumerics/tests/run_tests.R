@@ -66,7 +66,69 @@ check("hover box: bases follow row/column order; marked pairs only where gaps/N/
       grepl("\n11 - T/G\n", hover$text[["o\tq"]]) && hover$flagged[["q\to"]] && !hover$flagged[["q\tp"]] &&
         identical(hover$text[["q\tp"]], "q / p\n0 SNPs over 11 compared positions"))
 
+# Alignment viewer (R/msa.R): every cell class against an anchor sequence.
+msa_toy <- c(anchor = "ACGTRACGT-ACGA",
+             x      = "--CTAANKTA-CGA",   # end, end, mismatch, ., amb.fit vs R, ., N, K fits G, ., base vs anchor gap, gap, ., ., .
+             y      = "ACGTCACG-TACG-",   # C vs R cannot match; gap, base vs anchor gap (one indel event); missing end
+             z      = "ACGTAACGT-ACGA")   # gap where the anchor has a gap: same
+toy_m <- msa_matrix(msa_toy)
+toy_cls <- matrix(as.integer(msa_classes(toy_m, toy_m["anchor", ])), 4)
+check("alignment viewer: cell classes (same, SNP, ambiguity fits/clashes, indel both ways, N, missing end)",
+      identical(toy_cls[2, ], c(6L, 6L, 1L, 0L, 2L, 0L, 5L, 2L, 0L, 4L, 4L, 0L, 0L, 0L)) &&
+        identical(toy_cls[3, ], c(0L, 0L, 0L, 0L, 3L, 0L, 0L, 0L, 4L, 4L, 0L, 0L, 0L, 6L)) &&
+        identical(toy_cls[4, ], c(0L, 0L, 0L, 0L, 2L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L)) &&
+        identical(msa_anchor_classes(toy_m["anchor", ]), c(8L, 8L, 8L, 8L, 2L, 8L, 8L, 8L, 8L, 4L, 8L, 8L, 8L, 8L)))
+check("alignment viewer: mismatch + strong ambiguity cells = SNP columns, for every anchor and row", {
+  bits <- base_bits(msa_toy)
+  all(vapply(names(msa_toy), function(a) {
+    cls <- msa_classes(toy_m, toy_m[a, ])
+    all(vapply(names(msa_toy), function(b) identical(which(cls[b, ] %in% as.raw(c(1, 3))), snp_columns(bits, a, b)), TRUE))
+  }, TRUE))
+})
+frag_anchor <- msa_matrix(c(a = "--ACGT--", b = "TTACGTAA"))
+check("alignment viewer: a fragment anchor has nothing to compare outside its own length (grey)",
+      identical(as.integer(msa_classes(frag_anchor, frag_anchor["a", ])["b", ]), c(7L, 7L, 0L, 0L, 0L, 0L, 7L, 7L)))
+toy_view <- msa_view(msa_load(msa_toy, "toy"), "anchor")
+check("alignment viewer: differences to the anchor, variable columns, anchor gaps, rows sorted by differences",
+      identical(unname(toy_view$diffs), c(0, 1, 1, 0)) &&
+        identical(which(toy_view$variable), c(3L, 5L, 8L, 9L, 10L, 11L)) && identical(which(toy_view$anchor_gap), 10L) &&
+        identical(rownames(toy_m)[toy_view$rows], c("z", "x", "y")))
+check("alignment viewer: per row indel events (a run counts once) and columns, ambiguity codes, no data; per column differing rows",
+      identical(toy_view$stats$indel_events, c(0, 1, 1, 0)) && identical(toy_view$stats$indel_cols, c(0, 2, 2, 0)) &&
+        identical(toy_view$stats$ambiguity, c(1, 2, 1, 1)) && identical(toy_view$stats$nodata, c(0, 3, 1, 0)) &&
+        identical(toy_view$ndiff, c(0, 0, 1, 0, 1, 0, 0, 0, 1, 2, 1, 0, 0, 0)))
+
+# Consensus: majority with split votes; tie -> ambiguity code (or N); gap inside most
+# sequences -> "-"; no votes -> N; threshold.
+cons_aln <- c(s1 = "AAGNA-AA", s2 = "AGGNA-CA", s3 = "CGRNC-G-", s4 = "CARN-AT-")
+# col: 1 A/C tie, 2 A/G tie, 3 G 3 votes (R splits) vs A 1, 4 no votes, 5 A 2 vs C 1 (+ a gap),
+#      6 gap inside 3 of 4, 7 four-way tie, 8 A (missing ends do not vote)
+cons <- function(...) rawToChar(msa_consensus(msa_matrix(cons_aln), ...))
+check("consensus: majority, split votes for ambiguity codes, ties as ambiguity code or N, gaps, no coverage",
+      identical(cons(), "MRGNA-NA") && identical(cons(ties = "n"), "NNGNA-NA"))
+check("consensus: with a threshold the most common base must reach it, else the code of the top bases",
+      identical(cons(threshold = 75), "MRGNM-NA") && identical(cons(threshold = 50), "MRGNA-NA") &&
+        identical(cons(threshold = 80, ties = "n"), "NNNNN-NA"))
+check("consensus: the default anchor (no anchor sequence chosen)",
+      identical(msa_view(msa_load(cons_aln, "c"))$anchor_name, MSA_CONSENSUS))
+
+# Coordinates: own base numbers, "gap after", the column of a base number.
+check("alignment viewer: base numbers along a sequence and the column of a base number",
+      identical(msa_positions(charToRaw("--AC-GT")), c(0L, 0L, 1L, 2L, 2L, 3L, 4L)) &&
+        msa_column_of(charToRaw("--AC-GT"), 3) == 6L && is.na(msa_column_of(charToRaw("--AC"), 5)))
+
+# Subsets keep the original column numbers; closest N includes ties.
+sub_a <- msa_subset(msa_load(c(p = "A--CA", q = "A-GCA", r = "AT-CA"), "s", compared = 2:4), c("p", "q"))
+check("alignment viewer: a subset drops columns that are a gap in every chosen row, keeps column numbers",
+      identical(sub_a$cols, c(1L, 3L, 4L, 5L)) && identical(sub_a$compared, c(FALSE, TRUE, TRUE, FALSE)))
+snp_toy <- matrix(c(0, 1, 2, 2, 5,  1, 0, 0, 0, 0,  2, 0, 0, 0, 0,  2, 0, 0, 0, 0,  5, 0, 0, 0, 0), 5,
+                  dimnames = list(c("q", "a", "b", "c", "d"), c("q", "a", "b", "c", "d")))
+check("closest N: ties at the N-th place are all included",
+      identical(msa_closest(snp_toy, "q", 2), list(ids = c("q", "a", "b", "c"), extra = 1L)) &&
+        identical(msa_closest(snp_toy, "q", 1)$ids, c("q", "a")))
+
 res <- run("fragments.fasta")
+frag <- res
 # KY782331.1 is one of the 101 equally close sequences, not necessarily one of the
 # 20 in the tree, so it is checked in the search hits.
 hit <- res$hits[res$hits$query == "test_KY782331_3snps" & res$hits$subject == "KY782331.1", ]
@@ -86,6 +148,7 @@ check("one query alone: only that query, compared over at least as many position
         own$compared_columns >= res$views[[ALL_QUERIES]]$compared_columns)
 
 res <- run("genome_revcomp.fasta")
+genome <- res
 check("whole genome: detected as reverse complement",
       "test_LC128713_1_rc_2snps" %in% unlist(res$manifest$reverse_complemented))
 check("whole genome: 2 SNPs to LC128713.1",
@@ -112,6 +175,55 @@ check("hover box of a database sample shows its metadata",
       tip_details(res$views[[1]], "LC128713.1")[["Sample"]] == "LC128713.1" &&
         "country" %in% names(tip_details(res$views[[1]], "LC128713.1")))
 
+# Alignment viewer on the real runs: the untrimmed alignment is kept and saved; with any
+# sequence as anchor, its differences over the compared region = the SNP table, and the
+# mismatch + strong ambiguity cells = snp_columns() over the whole alignment.
+msa_invariant <- function(v) {
+  a <- msa_from_result(v)
+  bits <- base_bits(v$aln_full)
+  all(vapply(setdiff(rownames(a$m), a$dropped), function(anchor) {
+    mv <- msa_view(a, anchor)
+    rows <- setdiff(rownames(a$m), a$dropped)
+    all(mv$diffs[rows] == v$snp[anchor, rows]) &&
+      all(vapply(rownames(a$m), function(b) identical(which(mv$classes[b, ] %in% as.raw(c(1, 3))),
+                                                      snp_columns(bits, anchor, b)), TRUE))
+  }, TRUE))
+}
+check("alignment viewer: for every anchor and row of every result, differences = SNP table and cells = snp_columns()",
+      all(vapply(Filter(function(v) is.null(v$error), c(frag$views, res$views)), msa_invariant, TRUE)))
+gv <- res$views[[1]]
+check("run folder: untrimmed alignment saved with real names, compared region in the manifest",
+      file.exists(file.path(res$out_dir, "alignment_untrimmed.fasta")) &&
+        setequal(names(read_alignment(file.path(res$out_dir, "alignment_untrimmed.fasta"))), names(gv$aln_full)) &&
+        identical(res$manifest$results[[1]]$compared_region, sprintf("%d-%d", min(gv$compared_cols), max(gv$compared_cols))))
+ga <- msa_from_result(gv, unlist(res$manifest$reverse_complemented))
+q <- "test_LC128713_1_rc_2snps"
+gq <- msa_view(ga, q)
+diff_cols <- which(gq$classes["LC128713.1", ] %in% as.raw(c(1, 3)))
+check("alignment viewer: reverse-complemented query numbered on its reverse complement, as in the SNP hover box (3001, 3101)",
+      q %in% ga$revcomp && identical(msa_positions(ga$m[q, ])[diff_cols], c(3001L, 3101L)) &&
+        msa_first_difference(ga, gq, "LC128713.1") == diff_cols[1] &&
+        msa_column_of(ga$m[q, ], 3001) == diff_cols[1])
+check("alignment viewer: rows in tree order, as the SNP table",
+      identical(rownames(ga$m)[seq_along(gv$tree$tip.label)], tree_order(gv$tree)))
+folders <- msa_run_results(res$out_dir)
+fa <- msa_load_run_folder(folders[[1]], names(folders)[1], attr(folders, "manifest"), attr(folders, "regions")[[1]])
+check("earlier run folder: opens the same alignment, compared region, queries and order",
+      identical(fa$m, ga$m) && identical(fa$compared, ga$compared) && identical(fa$queries, ga$queries) &&
+        identical(fa$revcomp, ga$revcomp))
+pdf_file <- file.path(out, "window.pdf")
+msa_pdf(ga, gq, gq$rows[1:5], diff_cols[1] + (-20:20), pdf_file)
+msa_pdf(ga, gq, gq$rows, seq_len(ncol(ga$m)), file.path(out, "whole.pdf"))
+check("alignment viewer: PDF of a window (letters) and of the whole alignment", all(file.size(c(pdf_file, file.path(out, "whole.pdf"))) > 1000))
+html_file <- file.path(out, "alignment.html")
+msa_html(ga, gq, html_file, sort = "name")
+html <- paste(readLines(html_file, warn = FALSE), collapse = "\n")
+check("alignment viewer: standalone HTML page with the viewer, the data and the current anchor",
+      grepl("fhiMsa.load(", html, fixed = TRUE) && grepl("function drawOverview", html, fixed = TRUE) &&
+        grepl(q, html, fixed = TRUE) && lengths(regmatches(html, gregexpr("</script>", html, fixed = TRUE))) == 2)
+check("alignment viewer: FASTA of the shown region",
+      identical(nchar(msa_fasta(ga, 1:2, 101, 200)), stats::setNames(c(100L, 100L), rownames(ga$m)[1:2])))
+
 # A database sample sent from the Database viewer: its own entry is left out.
 ref <- load_db_seqs(db, cfg)
 self_query <- ref$seqs["AY649695.1"]
@@ -133,6 +245,333 @@ res <- run_compare(apart, db, cfg, settings, out_dir = file.path(out, "apart"), 
 check("queries that do not overlap: no result together, a result for each alone",
       grepl("do not overlap", res$views[[ALL_QUERIES]]$error) &&
         all(vapply(res$views[c("region_a", "region_b")], function(v) is.matrix(v$snp), TRUE)))
+
+# Sets (R/sets.R, decision 0012). A second database (3 demo samples) for name clashes.
+db2_dir <- file.path(out, "db2")
+dir.create(db2_dir)
+ids2 <- c("AY649695.1", "LC128713.1", "KY782331.1")
+write_fasta(ref$seqs[ids2], file.path(db2_dir, "seqs.fasta"))
+utils::write.table(read_metadata(db)[match(ids2, read_metadata(db)$id), c("id", "country")],
+                   file.path(db2_dir, "meta.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
+cfg$databases[["Second db"]] <- list(name = "Second db", fasta = file.path(db2_dir, "seqs.fasta"),
+                                     metadata = file.path(db2_dir, "meta.tsv"), id_column = "id")
+db2 <- cfg$databases[["Second db"]]
+meta1 <- read_metadata(db)
+st <- set_new("Test set")
+st <- set_add(st, set_from_database(db, cfg, c("AY649695.1", "AB279735.1"), meta1))$set
+r <- set_add(st, set_from_database(db2, cfg, c("AY649695.1", "LC128713.1"), read_metadata(db2)))
+st <- r$set
+pasted <- set_candidates(c("AY649695.1", "q1", "q1", "q1"), c(ref$seqs[["AY649695.1"]], "ACGTACGT", "ACGTACGT", "ACGTTCGT"),
+                         "query", "pasted")
+r2 <- set_add(st, pasted)
+st <- r2$set
+again <- set_add(st, set_from_database(db, cfg, c("AY649695.1", "AB279735.1", "LC128713.1"), meta1))
+check("sets: a name in two databases becomes <name>_<database> for both (short_name, else the name made safe)",
+      identical(set_names(r$set$members), c("AY649695.1_demo", "AB279735.1", "AY649695.1_Second_db", "LC128713.1")) &&
+        identical(unname(r$renamed), c("AY649695.1_demo", "AY649695.1_Second_db")))
+check("sets: a query named like a database sample becomes <name>_query; another sequence with a used name <name>_2",
+      identical(set_names(st$members)[5:7], c("AY649695.1_query", "q1", "q1_2")) &&
+        identical(r2$already, "q1") && identical(r2$added, c("AY649695.1_query", "q1", "q1_2")))
+check("sets: the same database sample is kept once (the same name from another database is a new member)",
+      identical(again$already, c("AY649695.1", "AB279735.1")) && identical(again$added, "LC128713.1_demo") &&
+        nrow(again$set$members) == 8 && grepl("2 were already in the set", set_add_message(again)))
+check("sets: checksum = md5 of sorted 'name<TAB>SEQUENCE' lines (known answer)",
+      set_checksum(c(b = "gg-t", a = "ACGT")) == "f0cc91e49490ef264ac6bd412834387e" &&
+        set_checksum(c(a = "ACGT", b = "GGT")) == "f0cc91e49490ef264ac6bd412834387e")
+
+# A set made from run results: queries as given (turned back), with a note; database
+# samples with the run's database checksum; the set starts with the run's alignment.
+ga_run <- msa_from_result(genome$views[[1]], unlist(genome$manifest$reverse_complemented))
+ga_run$origin <- msa_run_origin(genome$manifest, basename(genome$out_dir), cfg$databases)
+from_run <- set_add(set_new("From run"), set_from_msa(ga_run, added_from = "Run test"))$set
+rq <- from_run$members$source == "query"
+rc_query <- read_fasta(file.path(root, "tests", "genome_revcomp.fasta"))
+check("sets from a run: the query is kept as given (not turned), with a note; samples carry the database checksum",
+      identical(unname(from_run$seqs[from_run$members$key[rq]]), unname(rc_query)) &&
+        grepl("reverse-complemented in the run", from_run$members$note[rq]) &&
+        all(from_run$members$database_md5[!rq] == genome$manifest$database$fasta_md5))
+fr_aln <- set_alignment(from_run)
+check("sets from a run: start with the run's (untrimmed) alignment, the query turned in it",
+      identical(unname(fr_aln$aln[rownames(ga_run$m)]), unname(genome$views[[1]]$aln_full[rownames(ga_run$m)])) &&
+        identical(fr_aln$turned, q) && !length(fr_aln$missing))
+fr_a <- msa_from_set(from_run)
+fr_v <- msa_view(fr_a, q)
+fr_cols <- which(fr_v$classes["LC128713.1", ] %in% as.raw(c(1, 3)))
+check("sets from a run: in the Alignment page the query is numbered on its reverse complement (3001, 3101)",
+      q %in% fr_a$revcomp && identical(msa_positions(fr_a$m[q, ])[fr_cols], c(3001L, 3101L)))
+smaller <- set_remove(from_run, from_run$members$key[!rq][1:5])
+check("sets: removing members keeps the alignment (their rows taken out); adding makes it out of date",
+      nrow(msa_from_set(smaller)$m) == nrow(ga_run$m) - 5 && !length(set_alignment(smaller)$missing) &&
+        identical(set_alignment(set_add(smaller, set_from_database(db, cfg, "AB279735.1", meta1))$set)$missing,
+                  "AB279735.1"))
+
+# Orientation and alignment: the reverse-complemented genome among database genomes is
+# turned (and only it), and numbered on its reverse complement, as in runs.
+genomes <- c("LC128713.1", "EU526089.1", "AB279735.1", "MH933766.1", "AY644670.1")
+orient_set <- set_add(set_new("Orient"), set_from_database(db, cfg, genomes, meta1))$set
+orient_set <- set_add(orient_set, set_candidates(names(rc_query), rc_query, "query", "pasted"))$set
+orient_seqs <- stats::setNames(unname(orient_set$seqs), orient_set$members$key)
+in_process <- set_align(orient_seqs, threads = 2)
+check("set alignment: OrientNucleotides turns the reverse-complemented genome and nothing else",
+      identical(in_process$turned, orient_set$members$key[orient_set$members$source == "query"]))
+orient_set$alignment <- in_process[c("aln", "turned", "made", "from", "method", "versions")]
+os_a <- msa_from_set(orient_set)
+os_v <- msa_view(os_a, q)
+os_cols <- which(os_v$classes["LC128713.1", ] %in% as.raw(c(1, 3)))
+check("set alignment: the turned sequence is numbered on its reverse complement (SNPs at 3001 and 3101)",
+      q %in% os_a$revcomp && identical(msa_positions(os_a$m[q, ])[os_cols], c(3001L, 3101L)))
+job <- align_start(orient_seqs, threads = 2, dir = file.path(out, "align_job"))
+repeat { polled <- align_poll(job); if (polled$done) break; Sys.sleep(0.5) }
+check("background alignment: the same alignment and turned sequences as in-process",
+      is.null(polled$error) && identical(polled$result$aln, in_process$aln) &&
+        identical(polled$result$turned, in_process$turned) && polled$value %||% 1 == 1)
+big <- ref$seqs[seq_len(400)]
+job <- align_start(big, threads = 1, dir = file.path(out, "cancel_job"))
+Sys.sleep(3)
+check("background alignment: Cancel stops the process and leaves no result",
+      job$proc$is_alive() && align_cancel(job) && !job$proc$is_alive() && !dir.exists(file.path(out, "cancel_job")))
+check("background alignment: progress read from DECIPHER's output",
+      isTRUE(all.equal(align_progress(paste0("STEP Orienting\nDetermining distance matrix based on shared 10-mers:\n",
+                                             strrep("=", 40)))$value, 0.085)) &&
+        isTRUE(all.equal(align_progress(paste0("Iteration 2 of 2:\n\nDetermining distance matrix based on alignment:\n",
+                                               strrep("=", 80), "\n\nTime difference of 0 secs\n\n",
+                                               "Reclustering into groups by similarity:\n", strrep("=", 40)))$value,
+                         0.796875)) &&
+        align_progress("")$text == "Starting")
+
+# Save and open again: sequences, table, sources with database checksums, checksum, the
+# alignment and its turned rows; Replace and Delete touch only the set's files.
+orient_set <- set_add(orient_set, set_from_database(db2, cfg, "AY649695.1", read_metadata(db2)))$set
+saved_dir <- file.path(out, "sets", set_folder_name("Orient: test?"))
+saved <- set_save(orient_set, saved_dir)
+loaded <- set_load(saved_dir)
+yml <- yaml::read_yaml(file.path(saved_dir, "set.yaml"))
+check("set save/open: same sequences, table, alignment and turned rows",
+      identical(set_fasta(loaded), set_fasta(orient_set)) && identical(set_table(loaded), set_table(orient_set)) &&
+        identical(set_alignment(loaded)$aln, set_alignment(orient_set)$aln) && identical(set_alignment(loaded)$turned, q) &&
+        identical(set_alignment(loaded)$missing, "AY649695.1") && !loaded$dirty && basename(saved_dir) == "Orient_ test_")
+check("set save/open: set.yaml has the sources with database checksums, the checksum and the alignment",
+      identical(yml$checksum, set_checksum(set_fasta(orient_set))) && yml$n_sequences == 7 &&
+        identical(vapply(yml$sources, function(s) s$database %||% s$type, ""), c(db$name, "Second db", "query")) &&
+        identical(yml$sources[[1]]$database_md5, unname(tools::md5sum(db$fasta))) && yml$sources[[1]]$n == 5 &&
+        identical(yml$sources[[2]]$database_md5, unname(tools::md5sum(db2$fasta))) &&
+        identical(unlist(yml$alignment$reverse_complemented), q) && nrow(set_list_saved(file.path(out, "sets"))) == 1)
+writeLines("mine", file.path(saved_dir, "notes.txt"))
+check("sets: Delete removes only the set's files; a folder with other files is not a free place to save",
+      identical(set_delete(saved_dir), "notes.txt") && identical(list.files(saved_dir), "notes.txt") &&
+        set_folder_state(saved_dir) == "other" && set_folder_state(file.path(out, "sets", "new")) == "free")
+aligned_file <- file.path(out, "aligned_in.fasta")
+three <- msa_subset(ga_run, rownames(ga_run$m)[1:3])
+write_fasta(msa_fasta(three, 1:3), aligned_file)
+from_file <- set_add(set_new("F"), set_from_fasta(aligned_file, "aligned_in.fasta"))$set
+unaligned <- set_from_fasta(file.path(root, "tests", "fragments.fasta"))
+check("sets from a FASTA file: an aligned file brings its alignment, an unaligned one does not",
+      identical(unname(set_alignment(from_file)$aln), unname(msa_fasta(three, 1:3))) && is.null(unaligned$aln) &&
+        all(unaligned$members$source == "file"))
+
+# A set as the queries of a run (0012): its sample from the searched database leaves out
+# its own entry; a pasted query named like a database sample does not; a sample from
+# another database does not; the manifest records the set. Same with the command line.
+run_set <- set_add(set_new("Run set"), set_from_database(db, cfg, "AY649695.1", meta1))$set
+run_set <- set_add(run_set, set_candidates("KY782331.1", ref$seqs[["KY782331.1"]], "query", "pasted"))$set
+rq <- set_queries(run_set, db$name)
+set_run <- run_compare(rq$seqs, db, cfg, utils::modifyList(settings, list(exclude_self = rq$exclude_self)),
+                       out_dir = file.path(out, "set_run"), log = function(...) NULL, input = rq$input)
+set_man <- yaml::read_yaml(file.path(set_run$out_dir, "run_manifest.yaml"))
+hit_of <- function(q, subj) set_run$hits[set_run$hits$query == q & set_run$hits$subject == subj, ]
+check("set as queries: the database sample leaves out its own entry, the pasted query still finds its namesake (100%)",
+      identical(names(rq$seqs), c("AY649695.1", "KY782331.1")) && identical(rq$exclude_self, list(AY649695.1 = "AY649695.1")) &&
+        !nrow(hit_of("AY649695.1_query", "AY649695.1")) && isTRUE(hit_of("KY782331.1_query", "KY782331.1")$pident == 100))
+check("set as queries: the manifest records the set (name, checksum) and whose entry was left out; other runs have no input",
+      identical(set_man$input$set, "Run set") && identical(set_man$input$set_checksum, set_checksum(set_fasta(run_set))) &&
+        identical(set_man$settings$exclude_self, list(AY649695.1 = "AY649695.1")) &&
+        is.null(yaml::read_yaml(file.path(genome$out_dir, "run_manifest.yaml"))$input))
+other_db <- set_add(set_new("Other"), set_from_database(db2, cfg, "AY649695.1", read_metadata(db2)))$set
+big_set <- set_add(set_new("Big"), set_from_database(db, cfg, ref$ids$id[1:60], meta1))$set
+check("set as queries: a sample from another database leaves out nothing; more than 50 -> plain message; chosen rows",
+      isFALSE(set_queries(other_db, db$name)$exclude_self) &&
+        grepl("has 60 sequences; Outbreak detection takes at most 50", tryCatch(set_queries(big_set, db$name), error = conditionMessage)) &&
+        length(set_queries(big_set, db$name, big_set$members$key[1:10])$seqs) == 10)
+cli_cfg <- file.path(out, "cli_config.yaml")
+yaml::write_yaml(list(output_dir = file.path(out, "cli_results"), cache_dir = cfg$cache_dir,
+                      databases = list(list(name = db$name, fasta = db$fasta, metadata = db$metadata, id_column = "id"))), cli_cfg)
+invisible(set_save(run_set, file.path(out, "sets", "Run set")))
+cli <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"),
+                                c(file.path(root, "cli", "fhinumerics"), "--query-set", shQuote(file.path(out, "sets", "Run set")),
+                                  "--config", shQuote(cli_cfg), "--out", shQuote(file.path(out, "cli_set_run"))),
+                                stdout = TRUE, stderr = TRUE))
+cli_man <- tryCatch(yaml::read_yaml(file.path(out, "cli_set_run", "run_manifest.yaml")), error = function(e) NULL)
+check("command line --query-set: same exclusion and SNP matrix as in the window, set recorded",
+      identical(cli_man$settings$exclude_self, list(AY649695.1 = "AY649695.1")) && identical(cli_man$input$set, "Run set") &&
+        identical(utils::read.delim(file.path(out, "cli_set_run", "snp_matrix.tsv")),
+                  utils::read.delim(file.path(set_run$out_dir, "snp_matrix.tsv"))))
+
+# ---- Runs on sets (decision 0013) ----------------------------------------------------------
+check("every run records its mode: database for a database search",
+      identical(genome$manifest$mode, "database") && identical(set_man$mode, "database"))
+check("the example in the paste box is the public test fragment (KY782331.1 with 3 changes)",
+      identical(unname(read_fasta(file.path(root, "data", "example_query.fasta"))),
+                unname(read_fasta(file.path(root, "tests", "fragments.fasta"))[1])))
+check("SNP table corner marks for all pairs at once = snp_tips() for every query pair of the earlier runs",
+      all(vapply(Filter(function(v) is.null(v$error), c(frag$views, genome$views)), function(v) {
+        fl <- snp_flags(v$aln)
+        tp <- snp_tips(v)$flagged
+        all(vapply(names(tp), function(k) { rk <- strsplit(k, "\t")[[1]]; fl[rk[1], rk[2]] == tp[[k]] }, TRUE))
+      }, TRUE)))
+
+# (b) Within a set: the 5 genomes and the reverse-complemented query with 2 SNPs to
+# LC128713.1. Not aligned yet, so the run aligns it (turning the query); a second run uses
+# the set's alignment and gives the same SNP matrix.
+w_set <- set_add(set_new("Within"), set_from_database(db, cfg, genomes, meta1))$set
+w_set <- set_add(w_set, set_candidates(names(rc_query), rc_query, "query", "pasted"))$set
+quiet <- function(...) NULL
+w_res <- run_compare(NULL, NULL, cfg, settings, out_dir = file.path(out, "within"), log = quiet, within = set_within(list(w_set)))
+wv <- w_res$views[[1]]
+w_man <- yaml::read_yaml(file.path(w_res$out_dir, "run_manifest.yaml"))
+check("within a set: 2 SNPs between the query and LC128713.1, the query in red, turned for the alignment",
+      wv$snp[q, "LC128713.1"] == 2 && identical(wv$queries, q) && identical(unlist(w_man$reverse_complemented), q) &&
+        length(wv$tree$tip.label) == 6 && is.null(w_res$views[[1]]$error))
+d_tip <- list(chars = do.call(rbind, strsplit(toupper(wv$aln), "")), bits = base_bits(wv$aln))
+rownames(d_tip$chars) <- names(wv$aln)
+w_tip <- pair_tip(wv, d_tip$chars, d_tip$bits, "LC128713.1", q, unlist(w_man$reverse_complemented), 20)$text
+o_tip <- pair_tip(wv, d_tip$chars, d_tip$bits, "EU526089.1", "AB279735.1", character(0), 20)$text
+check("within a set: hover numbered along the query, on its reverse complement (3001, 3101); two others along the row",
+      grepl("\nSNPs:\n3001 - [ACGT]/[ACGT]\n3101 - [ACGT]/[ACGT]\n", w_tip) && grepl("Positions in EU526089.1:", o_tip, fixed = TRUE))
+check("within a set: manifest has mode, the set (checksum), the alignment made in the run and no database or search",
+      identical(w_man$mode, "within_set") && identical(w_man$input$set_checksum, set_checksum(set_fasta(w_set))) &&
+        isTRUE(w_man$alignment$made_in_this_run) && is.null(w_man$database) && is.null(w_man$settings$n_neighbours) &&
+        !file.exists(file.path(w_res$out_dir, "search_hits.tsv")))
+w_copy <- set_load(file.path(w_res$out_dir, "set"))
+check("within a set: the run folder holds the set (set.yaml, sequences, the alignment used = alignment_untrimmed.fasta)",
+      identical(set_checksum(set_fasta(w_copy)), w_man$input$set_checksum) &&
+        identical(w_man$alignment$md5, unname(tools::md5sum(file.path(w_res$out_dir, "set", "aligned.fasta")))) &&
+        identical(read_alignment(file.path(w_res$out_dir, "set", "aligned.fasta")),
+                  read_alignment(file.path(w_res$out_dir, "alignment_untrimmed.fasta"))))
+w_set$alignment <- w_res$set$alignment
+w_res2 <- run_compare(NULL, NULL, cfg, settings, out_dir = file.path(out, "within2"), log = quiet, within = set_within(list(w_set)))
+check("within a set: with the set's alignment (not made again) the same SNP matrix",
+      !w_res2$aligned_now && identical(w_res2$views[[1]]$snp, wv$snp) &&
+        isFALSE(w_res2$manifest$alignment$made_in_this_run))
+col_of <- function(pos) msa_column_of(charToRaw(wv$aln_full[[q]]), pos)
+around <- sprintf("%d-%d", col_of(3001) - 50, col_of(3001) + 50)
+w_reg <- run_compare(NULL, NULL, cfg, settings, out_dir = file.path(out, "within_region"), log = quiet,
+                     within = set_within(list(w_set), region = around))
+check("within a set: a region around query base 3001 only: 1 SNP to LC128713.1, region in the manifest and method",
+      w_reg$views[[1]]$snp[q, "LC128713.1"] == 1 && identical(w_reg$manifest$settings$region, around) &&
+        grepl(around, w_reg$manifest$method, fixed = TRUE) && identical(w_reg$views[[1]]$compared_region, around))
+wa <- msa_from_result(wv, run_turned(w_man))
+wa$origin <- msa_run_origin(w_man, "within", cfg$databases, set = w_res$set)
+w_back <- set_from_msa(wa)
+check("within a set: rows of the result added to a set come back as the members they are (source, database, as given)",
+      identical(sort(w_back$members$source), sort(w_set$members$source)) &&
+        all(w_back$members$database[w_back$members$source == "database"] == db$name) &&
+        identical(w_back$seqs[w_back$members$source == "query"], unname(rc_query)))
+
+# Fragments and genomes: the fragment limits the columns compared; a region outside it
+# leaves the fragment out (named). Fragments of different regions: no shared columns.
+mix <- set_add(set_new("Mix"), set_from_database(db, cfg, c("LC128713.1", "EU526089.1", "MH933766.1", "KY782331.1"), meta1))$set
+mix$alignment <- set_align(stats::setNames(unname(mix$seqs), mix$members$key), threads = 2)
+m_res <- run_compare(NULL, NULL, cfg, utils::modifyList(settings, list(bootstrap = FALSE)), out_dir = file.path(out, "mix"),
+                     log = quiet, within = set_within(list(mix)))
+m_reg <- run_compare(NULL, NULL, cfg, utils::modifyList(settings, list(bootstrap = FALSE)), out_dir = file.path(out, "mix_region"),
+                     log = quiet, within = set_within(list(mix), region = "501-2000"))
+check("within a set: a fragment among genomes limits the compared columns (named); nothing is left out",
+      "KY782331.1" %in% m_res$views[[1]]$limited_by && m_res$views[[1]]$compared_columns < 520 &&
+        !length(m_res$views[[1]]$dropped) && identical(unlist(m_res$manifest$results[[1]]$limited_by), m_res$views[[1]]$limited_by))
+check("within a set: a region outside the fragment leaves it out (named in the result and the manifest)",
+      identical(m_reg$views[[1]]$dropped, "KY782331.1") && identical(unlist(m_reg$manifest$results[[1]]$dropped), "KY782331.1") &&
+        !"KY782331.1" %in% rownames(m_reg$views[[1]]$snp))
+# (With a genome that spans both: two fragments alone are laid over each other by the
+# aligner, see docs/issues.md.)
+apart_set <- set_add(set_new("Apart"), set_candidates(names(apart), apart, "file", "File apart.fasta"))$set
+apart_set <- set_add(apart_set, set_from_database(db, cfg, "LC128713.1", meta1))$set
+check("within a set: sequences that do not overlap -> 'pick a region in the Alignment page'",
+      identical(tryCatch(run_compare(NULL, NULL, cfg, settings, out_dir = file.path(out, "apart_within"), log = quiet,
+                                     within = set_within(list(apart_set))), error = conditionMessage),
+                "These sequences do not overlap; pick a region in the Alignment page."))
+check("within a set: more than 300 sequences -> plain message",
+      grepl("has 301 sequences; at most 300", tryCatch(run_compare(NULL, NULL, cfg, settings, log = quiet,
+        within = set_within(list(set_add(set_new("Huge"), set_from_database(db, cfg, ref$ids$id[1:301], meta1))$set))),
+        error = conditionMessage)))
+toy_set <- set_add(set_new("Toy"), set_candidates(c("a", "b", "c"), c("ACGT", "ACTTGT", "ACGA"), "file", "toy",
+                                                  aln = c("AC--GT", "ACTTGT", "AC--GA"), turned = rep(FALSE, 3)))$set
+check("within a set: a region picked on the set's alignment -> the same columns among the rows chosen",
+      identical(set_within(list(toy_set), toy_set$members$key[c(1, 3)], region = "3-6")$region, "3-4") &&
+        identical(set_within(list(toy_set), region = "3-6")$region, "3-6"))
+
+# Several sets together: the same sample once, the set(s) it is in, the set rules for names.
+sa <- set_add(set_new("A"), set_from_database(db, cfg, c("AY649695.1", "LC128713.1"), meta1))$set
+sa <- set_add(sa, set_candidates("p1", "ACGTACGTAA", "query", "pasted"))$set
+sb <- set_add(set_new("B"), set_from_database(db, cfg, c("LC128713.1", "KY782331.1"), meta1))$set
+sb <- set_add(sb, set_candidates(c("p1", "p2"), c("ACGTACGTAA", "ACGTACGTTT"), "query", "pasted"))$set
+sab <- set_merge(list(sa, sb))
+check("several sets: one sample in both is kept once, with the sets it is in",
+      identical(set_names(sab$members), c("AY649695.1", "LC128713.1", "p1", "KY782331.1", "p2")) &&
+        identical(sab$members$in_set, c("A", "A, B", "A, B", "B", "B")) && identical(sab$name, "A + B"))
+
+# (c) Sets as the database: only the set's sequences are searched; the fragment with 3
+# substitutions finds KY782331.1 (3 mismatches). The set's sequences are turned to one
+# orientation: a reversed copy of LC128713.1 is found by the reversed genome query (2 SNPs).
+dbs <- set_add(set_new("Search"), set_from_database(db, cfg, c(ref$ids$id[100:130], "KY782331.1", genomes[-1]), meta1))$set
+lc_rev <- reverse_complement(ref$seqs[["LC128713.1"]])
+dbs <- set_add(dbs, set_candidates("LC128713_reversed", lc_rev, "file", "File reversed.fasta"))$set
+sdb <- set_db(list(dbs), cfg, 2)
+frag_q <- read_fasta(file.path(root, "tests", "fragments.fasta"))[1]
+c_res <- run_compare(c(frag_q, rc_query), sdb, cfg, settings, out_dir = file.path(out, "set_db"), log = quiet)
+c_man <- yaml::read_yaml(file.path(c_res$out_dir, "run_manifest.yaml"))
+best <- function(qn) c_res$hits[c_res$hits$query == qn, ][1, ]
+check("set as the database: only the set's sequences are searched; the fragment finds KY782331.1 with 3 mismatches",
+      all(c_res$hits$subject %in% set_names(dbs$members)) && best("test_KY782331_3snps")$subject == "KY782331.1" &&
+        best("test_KY782331_3snps")$mismatch == 3)
+check("set as the database: a reversed member is turned (named), the reversed genome query finds it with 2 SNPs",
+      identical(sdb$from_sets$turned, "LC128713_reversed") && best(q)$subject == "LC128713_reversed" &&
+        c_res$views[[q]]$snp[q, "LC128713_reversed"] == 2 && identical(unlist(c_man$database$reverse_complemented), "LC128713_reversed"))
+check("set as the database: manifest mode, set checksum and sets; search index in cache/set_<checksum>; the set copied",
+      identical(c_man$mode, "set_database") && identical(c_man$database$set_checksum, set_checksum(set_fasta(dbs))) &&
+        identical(c_man$database$sets[[1]]$name, "Search") &&
+        file.exists(file.path(cfg$cache_dir, paste0("set_", substr(c_man$database$set_checksum, 1, 12)), "index.rds")) &&
+        identical(set_checksum(set_fasta(set_load(file.path(c_res$out_dir, "set")))), c_man$database$set_checksum))
+check("set as the database: the set's columns (source, database) are database metadata for the hits and the tree",
+      all(c("source", "database", "original_id") %in% names(c_res$hits)) && "source" %in% c_res$display_columns &&
+        best("test_KY782331_3snps")$source == "database")
+qs <- set_add(set_new("New"), set_from_database(db, cfg, "KY782331.1", meta1))$set
+qs <- set_add(qs, set_candidates("new1", "ACGTTTGGCA", "query", "pasted"))$set
+qq <- set_queries(qs, sdb$name, db_set = sdb$from_sets$set)
+check("set as the database: queries from a set leave out the same sample in the sets searched, others nothing",
+      identical(qq$exclude_self, list(KY782331.1 = "KY782331.1")) && qq$n_own == 1)
+two <- set_db(list(sa, sb), cfg)
+check("several sets as the database: their sequences together (a sample in both once)",
+      identical(two$name, "Sets: A + B") && length(read_fasta(two$fasta)) == 5 && length(two$from_sets$manifest$sets) == 2)
+
+# The command line gives the same results (saved set folders).
+cli_run <- function(...) suppressWarnings(system2(file.path(R.home("bin"), "Rscript"),
+  c(file.path(root, "cli", "fhinumerics"), ..., "--config", shQuote(cli_cfg)), stdout = TRUE, stderr = TRUE))
+invisible(set_save(w_set, file.path(out, "sets", "Within")))
+invisible(cli_run("--within-set", shQuote(file.path(out, "sets", "Within")), "--region", around,
+                  "--out", shQuote(file.path(out, "cli_within"))))
+check("command line --within-set --region: same SNP matrix and region as in the window",
+      identical(utils::read.delim(file.path(out, "cli_within", "snp_matrix.tsv")),
+                utils::read.delim(file.path(w_reg$out_dir, "snp_matrix.tsv"))) &&
+        identical(yaml::read_yaml(file.path(out, "cli_within", "run_manifest.yaml"))$settings$region, around))
+invisible(set_save(dbs, file.path(out, "sets", "Search")))
+write_fasta(c(frag_q, rc_query), file.path(out, "cli_queries.fasta"))
+invisible(cli_run("--query", shQuote(file.path(out, "cli_queries.fasta")), "--set-db", shQuote(file.path(out, "sets", "Search")),
+                  "--out", shQuote(file.path(out, "cli_set_db"))))
+check("command line --set-db: same hits and SNP matrix as in the window",
+      identical(utils::read.delim(file.path(out, "cli_set_db", "search_hits.tsv"))[, 1:12],
+                utils::read.delim(file.path(c_res$out_dir, "search_hits.tsv"))[, 1:12]) &&
+        identical(utils::read.delim(file.path(out, "cli_set_db", "snp_matrix.tsv")),
+                  utils::read.delim(file.path(c_res$out_dir, "snp_matrix.tsv"))))
+
+# CSV for Norwegian Excel: UTF-8 with BOM, ";" between columns, decimal comma.
+csv_file <- file.path(out, "table.csv")
+write_csv2(data.frame(id = c("0012", "b"), share = c("2.5", "10"), n = c(1.5, 2), place = c("Tromsø", NA)), csv_file)
+csv_bytes <- readBin(csv_file, "raw", file.size(csv_file))
+csv_lines <- readLines(csv_file, encoding = "UTF-8", warn = FALSE)
+check("CSV: UTF-8 byte order mark, semicolons, decimal commas, leading zeros and ø kept",
+      identical(csv_bytes[1:3], as.raw(c(0xEF, 0xBB, 0xBF))) &&
+        identical(sub("^﻿", "", csv_lines[1]), "\"id\";\"share\";\"n\";\"place\"") &&
+        identical(csv_lines[2], "\"0012\";\"2,5\";1,5;\"Tromsø\"") && identical(csv_lines[3], "\"b\";\"10\";2;"))
 
 # Database viewer helpers.
 check("partial dates: year and month count as their first day",

@@ -71,9 +71,10 @@ snp_tips <- function(view, reverse_complemented = character(0), max_listed = 20)
        flagged = stats::setNames(vapply(tips, `[[`, TRUE, "flagged"), keys))
 }
 
-# Hover text of one pair: row r, column k (see snp_tips()).
+# Hover text of one pair: row r, column k (see snp_tips()). Numbered along the query of the
+# pair, or along r when neither is a query (comparisons within sets, 0013).
 pair_tip <- function(view, chars, bits, r, k, reverse_complemented, max_listed) {
-  q <- if (r %in% view$queries) r else k
+  q <- if (r %in% view$queries || !k %in% view$queries) r else k
   pos <- view$positions[[q]]
   a <- chars[r, ]
   b <- chars[k, ]
@@ -128,4 +129,31 @@ pair_tip <- function(view, chars, bits, r, k, reverse_complemented, max_listed) 
   }
   list(text = paste(lines, collapse = "\n"),
        flagged = length(missing) + length(gaps_inside) + length(fits) + length(n_count) > 0)
+}
+
+# The orange corner mark of snp_tips() (`flagged`) for every pair at once: the two differ
+# by a gap, either has an N, or an ambiguity code fits the other's base. Logical matrix.
+# For comparisons within sets (0013), where the hover text is made only when pointing at
+# a cell; tests/run_tests.R checks it agrees with snp_tips().
+snp_flags <- function(aln) {
+  chars <- do.call(rbind, strsplit(toupper(aln), ""))
+  bits <- base_bits(aln)
+  gap <- (chars == "-") * 1
+  flags <- (gap %*% t(1 - gap) + (1 - gap) %*% t(gap)) > 0
+  has_n <- rowSums(chars == "N") > 0
+  flags <- flags | outer(has_n, has_n, "|")
+  known <- !chars %in% c("N", "-")
+  ambiguous <- matrix(known & !chars %in% c("A", "C", "G", "T"), nrow(chars))
+  known <- matrix(known, nrow(chars))
+  for (r in which(rowSums(ambiguous) > 0)) {
+    cols <- which(ambiguous[r, ])
+    fit <- known[, cols, drop = FALSE] & bitwAnd(bits[, cols, drop = FALSE], rep(bits[r, cols], each = nrow(bits))) != 0L
+    fits <- rowSums(fit) > 0
+    fits[r] <- FALSE
+    flags[r, ] <- flags[r, ] | fits
+    flags[, r] <- flags[, r] | fits
+  }
+  diag(flags) <- FALSE
+  dimnames(flags) <- list(names(aln), names(aln))
+  flags
 }

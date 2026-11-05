@@ -43,8 +43,11 @@ settings:
 # Database viewer (both optional): `date_column` is the date column chosen at start
 # (dates as 2023-05-14, 2023-05 or 2023; default: a column called date, else the first
 # column holding dates); `country_column` is used for the map (default: country).
+# Sets (optional): `short_name` is added to a sample's name when two databases in one set
+# have a sample with that name (e.g. AY649695.1_demo); default: the name, made safe.
 databases:
   - name: Demo - public HAV VP1-2B (NextClade community, 1773 seqs)
+    short_name: demo
     fasta: data/demo/sequences.fasta
     metadata: data/demo/metadata.tsv
     id_column: id
