@@ -40,9 +40,89 @@ like `LabWareID_SekvensID-HAV.fa` or `.fasta`.
 
 The Sanger pipeline prepares a batch FASTA, builds the local BLAST database,
 prepares metadata, runs BLAST and Nextclade, builds per-sequence, batch and
-outbreak phylogenies, and renders `batch_report.html`. Analysis outputs are
+cluster phylogenies, and renders `batch_report.html`. Analysis outputs are
 written to `$HOME/<batch_name>_results`; the outer wrapper copies them to
 shared storage.
+
+## Analysis choices and interpretation
+
+The values below describe the current implementation. Some are set directly in
+the scripts rather than exposed as wrapper options, so changing them may
+require updating the relevant script.
+
+### Per-sequence trees
+
+- The pipeline requests up to **30 reference neighbors per query**, in addition
+  to the query sequence itself. A per-sequence tree therefore has up to 31
+  sequences; fewer may be available.
+- Neighbor selection starts with BLAST hits, ranked by lowest mismatch count
+  and then highest bitscore, with at most **2 hits per lineage**. Up to two
+  thirds of the neighbor slots are initially reserved for BLAST (20 of 30 at
+  the current setting).
+- Remaining slots are filled from the Nextclade community tree: leaves below
+  the query's nearest Nextclade node are ranked by accumulated branch
+  mutations. If there are too few descendants, sibling subtrees are considered.
+  If no community-tree neighbors are available, remaining slots are filled
+  with additional eligible BLAST hits.
+- A tree is attempted only when at least **3 sequences including the query**
+  are available. The MAFFT alignment is trimmed to positions covered by the
+  query. IQ-TREE uses GTR+G; trees with at least 4 sequences use 1,000 UFBoot
+  replicates, while 3-sequence trees are built without bootstrap support.
+
+### Batch tree and SNP distances
+
+- The batch tree and `batch_snp_distances.tsv` use the batch query sequences
+  extracted from per-sequence BLAST-only alignments. Reference sequences are
+  not included: the batch tree compares the batch sequences with one another.
+  Sequences without a usable per-sequence alignment are omitted, and at least
+  2 sequences are required.
+- The batch sequences are realigned together with MAFFT before tree and SNP
+  analysis. Pairwise SNP values are raw mismatch counts, not percentages.
+  Columns containing gaps, `n`, or `?` in either sequence are omitted from the
+  batch SNP count.
+- Per-sequence SNP matrices and heatmaps use the query plus its selected BLAST
+  neighbors (normally up to 20 BLAST references at the 30-neighbor setting).
+  They do not use the Nextclade community-tree neighbors. Pairwise values are
+  mismatch counts over the aligned positions that are not gaps in either
+  sequence. For older outputs without a BLAST-only alignment, the report falls
+  back to the full per-sequence alignment.
+
+### Cluster identification trees
+
+- The report groups a query's best-hit variant with alternative database
+  variants that are within **3 BLAST mismatches** of that query. Variant names
+  that share a base name (for example, `V6`, `V6a`, and `V6b`) are treated as
+  related; shared variants can connect groups transitively.
+- The report's variant overview includes groups with at least **2 batch and
+  database sequences combined**. The tree builder first requires at least
+  **3 batch and database records** for a group, and then needs at least 3
+  successfully loaded sequences in total to build a tree. The tree includes the
+  group's batch sequences and matching local-database sequences, plus up to
+  **2 outgroup sequences** from other detected groups when available. There is
+  no fixed maximum tree size.
+
+### Proposed variant names
+
+The nearest BLAST hit is selected by the lowest mismatch count, breaking ties
+by highest bitscore. The naming rules use the **calendar year when the script
+runs**, not the dataset date:
+
+- No BLAST hit, more than **2 mismatches**, or a hit assigned to another year:
+  propose the next `NOR-<current-year>-V<n>` number.
+- **0 mismatches** to a variant from the current year: keep that database
+  variant name.
+- **1-2 mismatches** to a variant from the current year: use its base name with
+  the suffix after the highest existing letter (`b` if there is no suffix;
+  suffix `a` is skipped).
+- Identical sequences in the batch share a proposed name. New numbers are
+  assigned in the order sequences appear in the batch FASTA.
+
+These are analysis and naming rules, not epidemiological decision thresholds.
+Cluster membership and proposed names should be reviewed with the sequence
+results and relevant metadata before being used as conclusions about
+transmission or as final database assignments. BLAST mismatch counts also
+depend on the alignment and reference database used; they are not normalized
+pairwise distances.
 
 ## Conda environments
 
