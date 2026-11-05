@@ -100,7 +100,7 @@ to missing scripts.
 | `scripts/build_per_seq_trees.sh` | Selects nearby sequences, aligns them, and builds per-sequence IQ-TREE trees. |
 | `scripts/build_batch_analysis.sh` | Builds batch phylogenies and SNP-distance results. |
 | `scripts/propose_variant_names.R` | Proposes variant names for batch sequences; writes `proposed_variants.tsv` (genotype, BLAST hit and its sample date, SNPs, proposed variant, notes). |
-| `scripts/build_outbreak_trees.R` | Generates outbreak/variant trees using batch and database sequences. |
+| `scripts/build_outbreak_trees.R` | Generates cluster phylogenetic trees using batch and database sequences; saves them under `cluster_trees/`. |
 | `scripts/batch_report.Rmd` | Renders the HTML report (including sample dates for BLAST hits and variants) and `summary.tsv`. |
 | `scripts/R-database.R` | Utility for importing, querying, and exporting external sequences in SQLite. |
 

@@ -8,8 +8,8 @@
 # Usage: Rscript build_outbreak_trees.R <output_dir> <dataset_date> <dataset_dir>
 #
 # Output:
-#   - <output_dir>/outbreak_trees/  (directory with PNG images per variant)
-#   - <output_dir>/.outbreak_trees.log  (detailed log of execution)
+#   - <output_dir>/cluster_trees/  (directory with PNG images per variant)
+#   - <output_dir>/.cluster_trees.log  (detailed log of execution)
 #
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -40,14 +40,14 @@ dataset_root <- dirname(dataset_dir)
 dataset_meta <- file.path(dataset_root, "metadata.tsv")
 
 # Setup logging
-log_file <- file.path(output_dir, ".outbreak_trees.log")
+log_file <- file.path(output_dir, ".cluster_trees.log")
 log_msg <- function(...) {
   msg <- sprintf(...)
   cat(msg, "\n")
   cat(paste0("[", Sys.time(), "] ", msg, "\n"), file = log_file, append = TRUE)
 }
 
-log_msg("=== Starting outbreak tree generation ===")
+log_msg("=== Starting cluster tree generation ===")
 log_msg("Output dir: %s", output_dir)
 log_msg("Dataset date: %s", dataset_date)
 log_msg("Dataset dir: %s", dataset_dir)
@@ -80,7 +80,7 @@ log_msg("✓ Output directory exists")
 # Setup paths
 trees_dir <- file.path(output_dir, "trees")
 lineages_file <- file.path(output_dir, "lineages", "nextclade.tsv")
-outbreak_trees_dir <- file.path(output_dir, "outbreak_trees")
+cluster_trees_dir <- file.path(output_dir, "cluster_trees")
 
 if (!dir.exists(trees_dir)) {
   log_msg("ERROR: Per-sequence trees directory not found: %s", trees_dir)
@@ -101,8 +101,8 @@ if (!file.exists(dataset_meta)) {
 log_msg("✓ Dataset metadata file exists")
 
 # Create output directory
-dir.create(outbreak_trees_dir, showWarnings = FALSE, recursive = TRUE)
-log_msg("✓ Created/verified outbreak_trees directory")
+dir.create(cluster_trees_dir, showWarnings = FALSE, recursive = TRUE)
+log_msg("✓ Created/verified cluster_trees directory")
 
 # === LOAD DATA ===============================================================
 
@@ -392,7 +392,7 @@ log_msg("✓ MAFFT executable validated")
 log_msg("✓ IQ-TREE executable validated")
 
 n_trees_generated <- 0
-unlink(file.path(outbreak_trees_dir, "tree_index.tsv"))
+unlink(file.path(cluster_trees_dir, "tree_index.tsv"))
 for (outbreak_variant in unique_variant) {
   log_msg("\nProcessing variant: %s", outbreak_variant)
   
@@ -521,7 +521,7 @@ for (outbreak_variant in unique_variant) {
     variant_slug <- gsub("[^A-Za-z0-9.-]", "_", tree_label)
     
     # Write raw (unaligned) sequences, then align them together with MAFFT
-    raw_file_tmp <- file.path(outbreak_trees_dir, sprintf("raw_%s.fasta", variant_slug))
+    raw_file_tmp <- file.path(cluster_trees_dir, sprintf("raw_%s.fasta", variant_slug))
     cat_lines <- character()
     for (seq_id in names(all_outbreak_seqs)) {
       cat_lines <- c(cat_lines, paste0(">", seq_id))
@@ -529,9 +529,9 @@ for (outbreak_variant in unique_variant) {
     }
     writeLines(cat_lines, raw_file_tmp)
     
-    aln_file_tmp <- file.path(outbreak_trees_dir, sprintf("%s.fasta", variant_slug))
+    aln_file_tmp <- file.path(cluster_trees_dir, sprintf("%s.fasta", variant_slug))
     mafft_stderr <- file.path(
-  outbreak_trees_dir,
+  cluster_trees_dir,
   sprintf(".mafft_stderr_%s.log", variant_slug)
 )
 
@@ -571,19 +571,19 @@ unlink(mafft_stderr, force = TRUE)
     tree_out_prefix <- sub("\\.fasta$", "", aln_file_tmp)
     
     # Capture both stdout and stderr to temporary files for debugging
-    stdout_log <- file.path(outbreak_trees_dir, sprintf(".iqtree_stdout_%s.log", variant_slug))
-    stderr_log <- file.path(outbreak_trees_dir, sprintf(".iqtree_stderr_%s.log", variant_slug))
+    stdout_log <- file.path(cluster_trees_dir, sprintf(".iqtree_stdout_%s.log", variant_slug))
+    stderr_log <- file.path(cluster_trees_dir, sprintf(".iqtree_stderr_%s.log", variant_slug))
     
    # IQ-TREE appends .treefile to the full input filename
 tree_file <- paste0(aln_file_tmp, ".treefile")
 
 stdout_log <- file.path(
-  outbreak_trees_dir,
+  cluster_trees_dir,
   sprintf(".iqtree_stdout_%s.log", variant_slug)
 )
 
 stderr_log <- file.path(
-  outbreak_trees_dir,
+  cluster_trees_dir,
   sprintf(".iqtree_stderr_%s.log", variant_slug)
 )
 
@@ -720,7 +720,7 @@ if (
         ) +
         hexpand(.8) +
         labs(
-          title = sprintf("Variant group %s — Phylogenetic outbreak tree",
+          title = sprintf("Variant group %s — Phylogenetic cluster tree",
                           gsub("_", " / ", tree_label, fixed = TRUE)),
           subtitle = sprintf("Batch (n=%d) vs database (n=%d) + outgroups, total=%d",
                             n_batch, nrow(db_seqs_for_variant), n_total)
@@ -737,11 +737,11 @@ if (
     
     # Save PNG with error handling
     tryCatch({
-      png_file <- file.path(outbreak_trees_dir, sprintf("%s.png", tree_label))
+      png_file <- file.path(cluster_trees_dir, sprintf("%s.png", tree_label))
       ggsave(png_file, plot = p, width = 12, height = 8, dpi = 150)
       # Index so the report can map tree file -> variant group
       write_tsv(tibble(tree_label = tree_label, group_key = outbreak_variant),
-                file.path(outbreak_trees_dir, "tree_index.tsv"), append = TRUE)
+                file.path(cluster_trees_dir, "tree_index.tsv"), append = TRUE)
       log_msg("  ✓ Saved tree PNG: %s", basename(png_file))
       n_trees_generated <- n_trees_generated + 1
     }, error = function(e) {
@@ -772,6 +772,6 @@ log_msg("  ✓ Alignment preserved: %s", basename(aln_file_tmp))
 # === COMPLETION ==============================================================
 
 log_msg("\n=== Completion ===")
-log_msg("Generated %d outbreak trees", n_trees_generated)
-log_msg("Saved to: %s", outbreak_trees_dir)
+log_msg("Generated %d cluster trees", n_trees_generated)
+log_msg("Saved to: %s", cluster_trees_dir)
 log_msg("Log file: %s", log_file)

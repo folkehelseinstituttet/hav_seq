@@ -38,7 +38,7 @@
 #   trees/batch/*  (batch tree artifacts)
 #   snp_matrices/batch_snp_distances.tsv
 #   proposed_variants.tsv  (variant naming table: genotype, BLAST hit + sample date, SNPs, proposed variant, notes)
-#   outbreak_trees/  (PNG images of outbreak lineage trees)
+#   cluster_trees/  (PNG images of cluster phylogenetic trees)
 #   summary.tsv  (per-sequence summary, written by the report)
 #   batch_report.html  (interactive HTML report)
 #
@@ -238,11 +238,11 @@ conda run -n R_shared Rscript \
   "$DATASET_DIR" \
   "$MAFFT_BIN" \
   "$IQTREE_BIN" || {
-    echo "WARNING: Outbreak tree generation failed"
-    echo "         Report will not include outbreak lineage trees"
+    echo "WARNING: Cluster tree generation failed"
+    echo "         Report will not include cluster trees"
   }
 
-echo "  Results → $OUT_BASE/outbreak_trees/"
+echo "  Results → $OUT_BASE/cluster_trees/"
 echo ""
 
 # ── Analysis 6: Batch report ──────────────────────────────────────────────────
@@ -282,6 +282,6 @@ echo "  NC lineages (FHI)        : $LINEAGES_OUT/nextclade.tsv"
 echo "  Per-sequence trees       : $OUT_BASE/trees/"
 echo "  Batch phylogenetic tree  : $OUT_BASE/trees/batch/tree.treefile"
 echo "  Batch SNP matrix         : $OUT_BASE/snp_matrices/batch_snp_distances.tsv"
-echo "  Outbreak lineage trees   : $OUT_BASE/outbreak_trees/"
+echo "  Cluster phylogenetic trees: $OUT_BASE/cluster_trees/"
 echo "  Batch report             : $REPORT_OUTPUT"
 echo "════════════════════════════════════════════════════════════════"

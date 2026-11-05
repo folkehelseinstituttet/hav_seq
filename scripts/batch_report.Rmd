@@ -1948,7 +1948,7 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
   assigned <- coalesce(vs_base$proposed_display, "—")
   dup_of <- vs_base$dup_of
 
-  # Clean proposed names, reused by the outbreak detection section
+  # Clean proposed names, reused by the cluster identification section
   batch_proposed_variants <- tibble(seqName = vs_base$seqName, proposed_variant = assigned_clean)
 
   variant_suggestions <- vs_base %>%
@@ -2012,9 +2012,9 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
 ---
 
 
-# 4. Outbreak detection
+# 4. Cluster identification
 
-```{r outbreak-detection, results='asis'}
+```{r cluster-identification, results='asis'}
 
 # Load BLAST results to identify which variants batch sequences match
 # Variants come from database variant assignments
@@ -2325,14 +2325,14 @@ if (nrow(outbreak_candidates) == 0) {
   # and tab headers must be exactly one level deeper for the tabset to activate.
   cat("## Phylogenetic trees by variant {.tabset}\n\n")
   
-  # Check if outbreak_trees directory exists with PNG files
-  outbreak_trees_dir <- file.path(params$out_base, "outbreak_trees")
+  # Check if cluster_trees directory exists with PNG files
+  cluster_trees_dir <- file.path(params$out_base, "cluster_trees")
   
-  if (dir.exists(outbreak_trees_dir)) {
-    png_files <- list.files(outbreak_trees_dir, pattern = "\\.png$", full.names = TRUE)
+  if (dir.exists(cluster_trees_dir)) {
+    png_files <- list.files(cluster_trees_dir, pattern = "\\.png$", full.names = TRUE)
     png_files <- sort(png_files)  # Sort alphabetically
     
-    tree_index_path <- file.path(outbreak_trees_dir, "tree_index.tsv")
+    tree_index_path <- file.path(cluster_trees_dir, "tree_index.tsv")
     tree_index <- if (file.exists(tree_index_path)) {
       read_tsv(tree_index_path, col_names = c("tree_label", "group_key"),
                col_types = "cc", show_col_types = FALSE)
@@ -2395,7 +2395,7 @@ if (nrow(outbreak_candidates) == 0) {
         .embed_tree(
   png_path,
   alt = paste(
-    "Outbreak phylogenetic tree for variant group",
+    "Cluster phylogenetic tree for variant group",
     variant_name
   )
 )
@@ -2458,20 +2458,20 @@ if (nrow(db_seqs_for_variant) > 0) {
 
       } # end for each png_file (outbreak trees)
     } else {
-      cat("*Outbreak tree images were not generated. Run:*\n\n")
+      cat("*Cluster tree images were not generated. Run:*\n\n")
       cat("```bash\n")
       cat(sprintf("Rscript scripts/build_outbreak_trees.R '%s' '%s' '%s'\n",
                   params$out_base, params$dataset_date, params$dataset_dir))
       cat("```\n\n")
     }
   } else {
-    cat("*Outbreak tree images not found. Run the outbreak trees generation step:*\n\n")
+    cat("*Cluster tree images not found. Run the cluster trees generation step:*\n\n")
     cat("```bash\n")
     cat(sprintf("Rscript scripts/build_outbreak_trees.R '%s' '%s' '%s'\n",
                 params$out_base, params$dataset_date, params$dataset_dir))
     cat("```\n\n")
-  } # end outbreak_trees_dir check
-} # end outbreak detection
+  } # end cluster_trees_dir check
+} # end cluster identification
 ```
 
 ---
@@ -3135,7 +3135,7 @@ FASTA-alignments som er samlet fra analysene, blant annet:
 | `proposed_variants.tsv` | Foreslåtte variantnavn og grunnlaget for forslagene. |
 | `trees/` | Per-sekvens trær, alignments og tilhørende IQ-TREE-resultater. |
 | `snp_matrices/` | SNP-avstandsmatriser for videre analyse. |
-| `outbreak_trees/` | FASTA-filer og trær for identifiserte utbruddsvarianter. |
+| `cluster_trees/` | FASTA-filer og trær for identifiserte variantklynger. |
 
 ```{r write-outputs, include=FALSE}
 # ── Prepare summary.tsv with expanded columns and new order ──────────────────
@@ -3255,17 +3255,17 @@ if (length(seq_tree_pngs) > 0) {
   }
 }
 
-# ── Collect outbreak phylogenetic tree images ──────────────────────────────────
-# Copy all .png files from output/outbreak_trees/ to report_figures/
-outbreak_trees_dir <- file.path(params$out_base, "outbreak_trees")
-if (dir.exists(outbreak_trees_dir)) {
-  outbreak_pngs <- list.files(
-    outbreak_trees_dir,
+# ── Collect cluster phylogenetic tree images ──────────────────────────────────
+# Copy all .png files from output/cluster_trees/ to report_figures/
+cluster_trees_dir <- file.path(params$out_base, "cluster_trees")
+if (dir.exists(cluster_trees_dir)) {
+  cluster_pngs <- list.files(
+    cluster_trees_dir,
     pattern = "\\.png$",
     full.names = TRUE
   )
-  if (length(outbreak_pngs) > 0) {
-    for (png_path in outbreak_pngs) {
+  if (length(cluster_pngs) > 0) {
+    for (png_path in cluster_pngs) {
       file.copy(png_path, file.path(report_figures_dir, basename(png_path)), overwrite = TRUE)
     }
   }
@@ -3313,14 +3313,14 @@ if (file.exists(batch_batch_duplicate)) {
 }
 
 # Outbreak alignments
-if (dir.exists(outbreak_trees_dir)) {
-  outbreak_fastas <- list.files(
-    outbreak_trees_dir,
+if (dir.exists(cluster_trees_dir)) {
+  cluster_fastas <- list.files(
+    cluster_trees_dir,
     pattern = "\\.fasta$",
     full.names = TRUE
   )
-  if (length(outbreak_fastas) > 0) {
-    for (fasta_path in outbreak_fastas) {
+  if (length(cluster_fastas) > 0) {
+    for (fasta_path in cluster_fastas) {
       file.copy(fasta_path, file.path(alignments_dir, basename(fasta_path)), overwrite = TRUE)
     }
   }
