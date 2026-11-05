@@ -3096,59 +3096,46 @@ heatmap_png <- file.path(
 
 
 
-# 7. Conclusions and recommendations
+# 7. Output files
 
-```{r conclusions}
-n_seqs        <- nrow(summary_tbl)
-n_blast_agree <- sum(summary_tbl$clade_agree_blast == TRUE, na.rm = TRUE)
-```
+De viktigste resultatene ligger direkte i output-mappen (`r params$out_base`). Start med rapporten og sammendragstabellen; figurer og sekvensalignments er samlet i egne undermapper.
 
-- **`r n_seqs`** sequences analyzed.
-- **BLAST vs clade agreement:** `r n_blast_agree`/`r sum(!is.na(summary_tbl$clade_agree_blast))` sequences where genotype is available.
+## Viktigste resultater
 
----
+| Fil | Innhold |
+|:---|:---|
+| `batch_report.html` | Denne interaktive rapporten med batch-resultater, figurer og anbefalinger. |
+| `summary.tsv` | Sammendrag per sekvens, inkludert genotype, BLAST-sammenligning og sekvensmål. |
 
-# 8. Output files
+## Figurer (`report_figures/`)
 
-```{r output-files}
-tibble(
-  File = c(
-    file.path(params$final_output_dir, "blast_results.tsv"),
-    file.path(params$final_output_dir, "lineages", "nextclade.tsv"),
-    file.path(params$final_output_dir, "trees", "<seqName>", "tree.treefile"),
-    file.path(params$final_output_dir, "trees", "<seqName>", "tree.png"),
-    file.path(params$final_output_dir, "trees", "<seqName>", "<seqName>.aligned_trimmed.fasta"),
-    file.path(params$final_output_dir, "trees", "<seqName>", "aligned_trimmed_blast_only.fa"),
-    file.path(params$final_output_dir, "snp_matrices", "<seqName>_snp_distances.tsv"),
-    file.path(params$final_output_dir, "outbreak_trees", "<Variant>.fasta"),
-    file.path(params$final_output_dir, "outbreak_trees", "<Variant>.png"),
-    file.path(params$final_output_dir, "summary.tsv"),
-    file.path(params$final_output_dir, "report_figures", "amplicon_coverage.png"),
-    file.path(params$final_output_dir, "report_figures", "batch_phylogenetic_tree.png"),
-    file.path(params$final_output_dir, "report_figures", "batch_snp_heatmap.png"),
-    file.path(params$final_output_dir, "report_figures", "<seqName>_snp_heatmap.png")
-  ),
-  Description = c(
-    "BLAST hits vs local HAV database",
-    "NextClade: clade assignment and QC results",
-    "IQ-TREE ML tree per query sequence",
-    "Rendered phylogenetic tree image (PNG) per query sequence",
-    "MAFFT alignment (query + BLAST hits + NextClade community sequences)",
-    "MAFFT alignment with BLAST hits only (no NextClade) — used for heatmap in report",
-    "Pairwise SNP distance matrix per query sequence (TSV format for external analysis)",
-    "Outbreak phylogenetic alignment: batch sequences + database sequences for each variant (FASTA)",
-    "Outbreak phylogenetic tree visualization (PNG) per HAV variant",
-    "Per-sequence summary table (this report, TSV) — includes all genotype and BLAST comparison data",
-    "Report figure: amplicon coverage plot",
-    "Report figure: batch phylogenetic tree",
-    "Report figure: batch SNP heatmap",
-    "Report figure: per-sequence SNP heatmap"
+Figurene er samlet her slik at de er enkle å finne og bruke videre:
 
-  )
-) %>%
-  kbl() %>%
-  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = TRUE)
-```
+- `batch_phylogenetic_tree.png` — fylogenetisk tre for batchen.
+- `batch_snp_heatmap.png` — SNP-variasjon i batchen.
+- `<seqName>_snp_heatmap.png` — SNP-heatmap per sekvens.
+- `<seqName>_tree.png` — fylogenetisk tre per sekvens.
+- PNG-filer for utbruddstrær, når slike er laget.
+
+## Sekvensalignments (`alignments/`)
+
+FASTA-alignments som er samlet fra analysene, blant annet:
+
+- `batch_alignment.fasta` — alignment av batchsekvensene.
+- `nextclade_junction.fasta` — Nextclade-alignment.
+- Per-sekvens alignments med sekvensnavn i filnavnet.
+- Alignments for utbruddstrær, når slike er laget.
+
+## Øvrige analysefiler
+
+| Fil eller mappe | Innhold |
+|:---|:---|
+| `blast_results.tsv` | BLAST-treff mot den lokale HAV-databasen. |
+| `lineages/nextclade.tsv` | Nextclade-genotype og kvalitetsresultater. |
+| `proposed_variants.tsv` | Foreslåtte variantnavn og grunnlaget for forslagene. |
+| `trees/` | Per-sekvens trær, alignments og tilhørende IQ-TREE-resultater. |
+| `snp_matrices/` | SNP-avstandsmatriser for videre analyse. |
+| `outbreak_trees/` | FASTA-filer og trær for identifiserte utbruddsvarianter. |
 
 ```{r write-outputs, include=FALSE}
 # ── Prepare summary.tsv with expanded columns and new order ──────────────────
@@ -3348,8 +3335,6 @@ if (length(fa_files) > 0) {
   }
 }
 ```
-
-*Summary written to `r file.path(params$final_output_dir, "summary.tsv")`*
 
 ---
 
