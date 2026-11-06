@@ -1132,7 +1132,7 @@ if (!file.exists(.ss_path)) {
   if (length(.ss_files) > 0) .ss_path <- .ss_files[1]
 }
 if (file.exists(.ss_path)) {
-  .ss_sample_info <- safe_tsv(.ss_path) %>%
+  .ss_sample_info <- safe_tsv(.ss_path, col_types = cols(.default = col_character())) %>%
     select(Sample, any_of(c("LabWareID", "SekvensID"))) %>%
     distinct()
 }
@@ -1281,7 +1281,7 @@ This report compares complementary HAV analyses run on **`r batch_name`**:
 
 # 1. Batch overview {.tabset}
 
-## Verdict table (with scrolling)
+## Verdict table
 
 ```{r triage-table}
 triage_tbl %>%
@@ -1319,6 +1319,10 @@ triage_tbl %>%
       }
     }
   })
+
+# Highlight database variants marked as requests
+.request_variant_colors <- .triage_display$`BLAST variant` %>%
+  map_chr(~ if (str_to_lower(str_trim(.)) == "request") "#fff9c4" else "")
 
 # Calculate background colors for Input length column (yellow if != 460)
 .input_length_colors <- .triage_display$`Input length` %>%
@@ -1363,28 +1367,7 @@ triage_tbl %>%
   column_spec(3, width = "10em", background = .genotype_nc_colors, extra_css = "white-space: nowrap;") %>%  # Genotype (NC)
   column_spec(4, width = "12em", background = .genotype_blast_colors, extra_css = "white-space: nowrap;") %>%  # Genotype (BLAST)
   column_spec(5, width = "14em", extra_css = "white-space: nowrap;") %>%  # BLAST top hit
-  column_spec(6, width = "16em", extra_css = "white-space: nowrap;") %>%  # BLAST variant
-  column_spec(7, background = .snp_colors, bold = TRUE) %>%  # Color code BLAST SNPs
-  column_spec(9, width = "20em", extra_css = "min-width: 18em; white-space: normal; line-height: 1.2; word-break: break-word;") %>%  # Similar BLAST variant
-  column_spec(10, background = .input_length_colors) %>%  # Color code Input length
-  scroll_box(width = "100%")
-```
-
-## Verdict table (without scrolling)
-
-```{r triage-table-compact}
-.triage_display %>%
-  select(-starts_with(".")) %>%
-  kbl(escape = FALSE,
-      table.attr = 'style="width: auto;"',
-      caption = "Batch overview (compact view without scrolling) — same data as above. Red background on Genotype columns indicates disagreement between NextClade and BLAST.") %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE) %>%
-  column_spec(1, width = "10em", extra_css = "white-space: nowrap;") %>%  # LabWareID
-  column_spec(2, width = "12em", extra_css = "white-space: nowrap;") %>%  # SequenceID
-  column_spec(3, width = "10em", background = .genotype_nc_colors, extra_css = "white-space: nowrap;") %>%  # Genotype (NC)
-  column_spec(4, width = "12em", background = .genotype_blast_colors, extra_css = "white-space: nowrap;") %>%  # Genotype (BLAST)
-  column_spec(5, width = "14em", extra_css = "white-space: nowrap;") %>%  # BLAST top hit
-  column_spec(6, width = "16em", extra_css = "white-space: nowrap;") %>%  # BLAST variant
+  column_spec(6, width = "16em", background = .request_variant_colors, extra_css = "white-space: nowrap;") %>%  # BLAST variant
   column_spec(7, background = .snp_colors, bold = TRUE) %>%  # Color code BLAST SNPs
   column_spec(9, width = "20em", extra_css = "min-width: 18em; white-space: normal; line-height: 1.2; word-break: break-word;") %>%  # Similar BLAST variant
   column_spec(10, background = .input_length_colors)  # Color code Input length
@@ -1913,7 +1896,7 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
   proposed_tbl <- safe_tsv(file.path(params$out_base, "proposed_variants.tsv"),
                            col_types = cols(.default = col_character()))
   if (nrow(proposed_tbl) == 0) {
-    proposed_tbl <- tibble(qseqid = character(), proposed_variant = character(),
+    proposed_tbl <- tibble(seqName = character(), proposed_variant = character(),
                            proposed_display = character(), dup_of = character())
     cat("*proposed_variants.tsv not found — run scripts/propose_variant_names.R.*\n\n")
   }
@@ -1927,7 +1910,7 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
     ) %>%
     left_join(
       proposed_tbl %>%
-        transmute(join_key = qseqid,
+        transmute(join_key = word(seqName, 1),
                   proposed_variant = na_if(proposed_variant, ""),
                   proposed_display = na_if(proposed_display, ""),
                   dup_of = na_if(dup_of, "")),
@@ -1942,6 +1925,15 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
         ) %>%
         select(sseqid, hit_sample_date),
       by = "sseqid"
+    ) %>%
+    left_join(
+      .ss_sample_info %>%
+        select(Sample, LabWareID, SequenceID = SekvensID),
+      by = c("seqName" = "Sample")
+    ) %>%
+    mutate(
+      LabWareID = if_else(!is.na(LabWareID), as.character(LabWareID), word(seqName, 1)),
+      SequenceID = if_else(!is.na(SequenceID), as.character(SequenceID), word(seqName, 2))
     )
 
   assigned_clean <- vs_base$proposed_variant
@@ -1966,7 +1958,8 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
       )
     ) %>%
     select(
-      Sequence = seqName,
+      LabWareID,
+      SequenceID,
       Genotype = clade,
       `BLAST hit` = sseqid,
       `BLAST hit sample date` = hit_sample_date,
@@ -1986,13 +1979,13 @@ if (nrow(summary_tbl) > 0 && nrow(meta) > 0 && "variant" %in% names(meta)) {
       bootstrap_options = c("striped", "hover", "condensed"),
       full_width = FALSE
     ) %>%
-    column_spec(1, width = "16em", extra_css = "white-space: nowrap;") %>%  # Sequence
-    column_spec(3, width = "16em", extra_css = "white-space: nowrap;") %>%  # BLAST hit
-    column_spec(4, width = "10em", extra_css = "white-space: nowrap;") %>%  # BLAST hit sample date
-    column_spec(6, width = "14em", extra_css = "white-space: nowrap;") %>%  # Hit variant
-    column_spec(7, width = "14em", extra_css = "white-space: nowrap;") %>%  # Suggested variant
-    column_spec(8, width = "24em", extra_css = "white-space: nowrap;") %>%  # Notes
-    scroll_box(width = "100%") %>%
+    column_spec(1, width = "10em", extra_css = "white-space: nowrap;") %>%  # LabWareID
+    column_spec(2, width = "12em", extra_css = "white-space: nowrap;") %>%  # SequenceID
+    column_spec(4, width = "16em", extra_css = "white-space: nowrap;") %>%  # BLAST hit
+    column_spec(5, width = "10em", extra_css = "white-space: nowrap;") %>%  # BLAST hit sample date
+    column_spec(7, width = "14em", extra_css = "white-space: nowrap;") %>%  # Hit variant
+    column_spec(8, width = "14em", extra_css = "white-space: nowrap;") %>%  # Suggested variant
+    column_spec(9, width = "24em", extra_css = "white-space: nowrap;") %>%  # Notes
     as.character()
 )
 } else {

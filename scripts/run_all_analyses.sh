@@ -226,7 +226,8 @@ conda run -n R_shared Rscript \
   "$OUT_BASE" \
   "$DATASET_DATE" \
   "$DATASET_DIR" \
-  "$BATCH_FA" || {
+  "$BATCH_FA" \
+  "$BATCH_DIR" || {
     echo "WARNING: Variant name proposal failed"
     echo "         Trees and report will lack proposed variant names"
   }

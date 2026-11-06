@@ -296,7 +296,7 @@ proposed_names <- if (file.exists(proposed_file)) {
   read_tsv(proposed_file, col_types = cols(.default = col_character()), show_col_types = FALSE)
 } else {
   log_msg("⚠ proposed_variants.tsv not found; labels show nearest-hit variant")
-  tibble(qseqid = character(), proposed_variant = character())
+  tibble(seqName = character(), proposed_variant = character())
 }
 
 if (n_unique_variants == 0) {
@@ -406,7 +406,7 @@ for (outbreak_variant in unique_variant) {
   batch_hit_variant <- setNames(batch_variants_clean$variant, batch_variants_clean$seqName)
   batch_label_variant <- batch_hit_variant
   if (nrow(proposed_names) > 0) {
-    prop <- setNames(proposed_names$proposed_variant, proposed_names$qseqid)
+    prop <- setNames(proposed_names$proposed_variant, word(proposed_names$seqName, 1))
     batch_label_variant <- ifelse(
       !is.na(prop[names(batch_hit_variant)]) & nzchar(prop[names(batch_hit_variant)]),
       prop[names(batch_hit_variant)],

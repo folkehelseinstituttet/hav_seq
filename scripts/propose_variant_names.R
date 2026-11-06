@@ -6,7 +6,7 @@
 # the outbreak trees, so trees and the report (batch_report.Rmd) share the same
 # names.
 #
-# Usage: Rscript propose_variant_names.R <out_base> <dataset_date> <dataset_dir> <batch_fa>
+# Usage: Rscript propose_variant_names.R <out_base> <dataset_date> <dataset_dir> <batch_fa> [batch_dir]
 #
 # Output: <out_base>/proposed_variants.tsv (same information as the report's
 #         "Variant naming" table, plus dup_of)
@@ -27,13 +27,14 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 4) {
-  cat("Usage: Rscript propose_variant_names.R <out_base> <dataset_date> <dataset_dir> <batch_fa>\n")
+  cat("Usage: Rscript propose_variant_names.R <out_base> <dataset_date> <dataset_dir> <batch_fa> [batch_dir]\n")
   quit(save = "no", status = 1)
 }
 out_base     <- args[1]
 dataset_date <- args[2]
 dataset_dir  <- args[3]
 batch_fa     <- args[4]
+batch_dir    <- if (length(args) >= 5) args[5] else dirname(batch_fa)
 
 meta_path  <- file.path(dirname(dataset_dir), "metadata.tsv")
 blast_path <- file.path(out_base, "blast_results.tsv")
@@ -88,6 +89,26 @@ fasta <- tibble(
     hit_year = as.integer(str_extract(blast_variant, "NOR-([0-9]+)", group = 1)),
     is_different_year = !is.na(hit_year) & hit_year != variant_year
   )
+
+.ss_sample_info <- tibble(
+  Sample = character(),
+  LabWareID = character(),
+  SekvensID = character()
+)
+.ss_path <- file.path(batch_dir, "auto_samplesheet.tsv")
+if (!file.exists(.ss_path)) {
+  .ss_files <- list.files(batch_dir, pattern = "samplesheet\\.tsv$", full.names = TRUE)
+  if (length(.ss_files) > 0) .ss_path <- .ss_files[1]
+}
+if (file.exists(.ss_path)) {
+  .ss_sample_info <- read_tsv(
+    .ss_path,
+    col_types = cols(.default = col_character()),
+    show_col_types = FALSE
+  ) %>%
+    select(Sample, any_of(c("LabWareID", "SekvensID"))) %>%
+    distinct()
+}
 
 all_db_variants <- unique(meta$variant[!is.na(meta$variant) & meta$variant != ""])
 
@@ -159,7 +180,10 @@ result <- fasta %>%
   mutate(proposed_variant = proposed, proposed_display = display, dup_of = dup_of) %>%
   left_join(nc_clade, by = "qseqid") %>%
   left_join(hit_dates, by = "sseqid") %>%
+  left_join(.ss_sample_info, by = c("seqName" = "Sample")) %>%
   mutate(
+    LabWareID = if_else(!is.na(LabWareID), as.character(LabWareID), word(seqName, 1)),
+    SequenceID = if_else(!is.na(SekvensID), as.character(SekvensID), word(seqName, 2)),
     notes = case_when(
       !is.na(dup_of) ~ paste0("Identical to ", dup_of, " in this batch"),
       !is.na(blast_mismatch) & blast_mismatch == 0 & is_different_year ~
@@ -170,7 +194,8 @@ result <- fasta %>%
       TRUE ~ paste0(">2 SNPs from nearest variant ", blast_variant)
     )
   ) %>%
-  select(qseqid, seqName, genotype, blast_hit = sseqid, blast_hit_sample_date,
+  select(LabWareID, SequenceID, seqName, genotype,
+         blast_hit = sseqid, blast_hit_sample_date,
          blast_variant, blast_mismatch, is_different_year,
          proposed_variant, proposed_display, dup_of, notes)
 
