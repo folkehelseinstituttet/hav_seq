@@ -119,6 +119,15 @@ if [[ ! -d "$LINEAGES_DATASET" ]]; then
   echo "ERROR: Lineages dataset not found at $LINEAGES_DATASET" >&2
   exit 1
 fi
+if ! PIPELINE_VERSION="$(git -C "$HAV_SEQ_REPO" describe --tags --always --dirty)"; then
+  echo "ERROR: Could not determine the pipeline version from Git in $HAV_SEQ_REPO" >&2
+  exit 1
+fi
+if [[ -z "$PIPELINE_VERSION" ]]; then
+  echo "ERROR: Git returned an empty pipeline version for $HAV_SEQ_REPO" >&2
+  exit 1
+fi
+export HAV_PIPELINE_VERSION="$PIPELINE_VERSION"
 
 mkdir -p "$OUT_BASE"
 
@@ -128,6 +137,7 @@ echo "  Batch     : $BATCH_NAME"
 echo "  Year      : $YEAR"
 echo "  Batch Dir       : $BATCH_DIR"
 echo "  Dataset   : $DATASET_DATE"
+echo "  Pipeline version : $PIPELINE_VERSION"
 echo "  Threads   : $THREADS"
 echo "  Output    : $OUT_BASE"
 echo "  Lineages dataset : $LINEAGES_DATASET"
@@ -227,7 +237,8 @@ conda run -n R_shared Rscript \
   "$DATASET_DATE" \
   "$DATASET_DIR" \
   "$BATCH_FA" \
-  "$BATCH_DIR" || {
+  "$BATCH_DIR" \
+  "$PIPELINE_VERSION" || {
     echo "WARNING: Variant name proposal failed"
     echo "         Trees and report will lack proposed variant names"
   }
@@ -261,6 +272,7 @@ rmarkdown::render(
     batch_name   = '$BATCH_NAME',
     batch_fa     = '$BATCH_FA',    
     dataset_date = '$DATASET_DATE',
+    pipeline_version = Sys.getenv('HAV_PIPELINE_VERSION'),
     n_neighbors  = 30,
     out_base     = '$OUT_BASE',
     dataset_dir  = '$DATASET_DIR',

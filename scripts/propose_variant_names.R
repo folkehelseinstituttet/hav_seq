@@ -6,7 +6,7 @@
 # the outbreak trees, so trees and the report (batch_report.Rmd) share the same
 # names.
 #
-# Usage: Rscript propose_variant_names.R <out_base> <dataset_date> <dataset_dir> <batch_fa> [batch_dir]
+# Usage: Rscript propose_variant_names.R <out_base> <dataset_date> <dataset_dir> <batch_fa> [batch_dir] [pipeline_version]
 #
 # Output: <out_base>/proposed_variants.tsv (same information as the report's
 #         "Variant naming" table, plus dup_of)
@@ -27,8 +27,26 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 4) {
-  cat("Usage: Rscript propose_variant_names.R <out_base> <dataset_date> <dataset_dir> <batch_fa> [batch_dir]\n")
+  cat("Usage: Rscript propose_variant_names.R <out_base> <dataset_date> <dataset_dir> <batch_fa> [batch_dir] [pipeline_version]\n")
   quit(save = "no", status = 1)
+}
+pipeline_version <- if (length(args) >= 6) {
+  trimws(args[6])
+} else {
+  git_version <- system2(
+    "git",
+    c("describe", "--tags", "--always", "--dirty"),
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  git_status <- attr(git_version, "status")
+  if (!is.null(git_status) && git_status != 0) {
+    stop("Unable to determine pipeline version from Git: ", paste(git_version, collapse = "\n"))
+  }
+  trimws(paste(git_version, collapse = ""))
+}
+if (length(pipeline_version) != 1L || !nzchar(pipeline_version)) {
+  stop("Pipeline version from Git is empty.")
 }
 out_base     <- args[1]
 dataset_date <- args[2]
@@ -197,7 +215,8 @@ result <- fasta %>%
   select(LabWareID, SequenceID, seqName, genotype,
          blast_hit = sseqid, blast_hit_sample_date,
          blast_variant, blast_mismatch, is_different_year,
-         proposed_variant, proposed_display, dup_of, notes)
+         proposed_variant, proposed_display, dup_of, notes) %>%
+  mutate(Pipeline_version = pipeline_version)
 
 write_tsv(result, out_path, na = "")
 cat(sprintf("Wrote %d proposed variant name(s) to %s\n", nrow(result), out_path))

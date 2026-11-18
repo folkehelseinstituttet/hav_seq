@@ -23,6 +23,7 @@ params:
   zoom_width: 35
   min_called_fraction: 0.5
   entropy_window: 15
+  pipeline_version: ""
 ---
 
 ```{r lightbox-setup, echo=FALSE, results='asis'}
@@ -164,6 +165,23 @@ suppressPackageStartupMessages({
 # ── Paths ────────────────────────────────────────────────────────────────────
 proj_dir     <- normalizePath(file.path(dirname(knitr::current_input(dir = TRUE)), ".."),
                               mustWork = FALSE)
+pipeline_version <- trimws(params$pipeline_version)
+if (!nzchar(pipeline_version)) {
+  git_version <- system2(
+    "git",
+    c("-C", shQuote(proj_dir), "describe", "--tags", "--always", "--dirty"),
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  git_status <- attr(git_version, "status")
+  if (!is.null(git_status) && git_status != 0) {
+    stop("Unable to determine pipeline version from Git: ", paste(git_version, collapse = "\n"))
+  }
+  pipeline_version <- trimws(paste(git_version, collapse = ""))
+}
+if (!nzchar(pipeline_version)) {
+  stop("Pipeline version from Git is empty.")
+}
 batch_dir    <- file.path(params$batch_dir)
 
 out_dir      <- file.path(params$out_base)
@@ -3215,7 +3233,8 @@ summary_tsv_output <- summary_tbl %>%
     aaSubstitutions,
     privateNucMuts_total,
     totalSubstitutions
-  )
+  ) %>%
+  mutate(Pipeline_version = pipeline_version)
 
 # Write summary TSV
 write_tsv(summary_tsv_output, file.path(params$out_base, "summary.tsv"))
@@ -3333,4 +3352,5 @@ if (length(fa_files) > 0) {
 
 *Report generated: `r Sys.time()`*  
 *Batch: `r batch_name`*  
-*Dataset used: `r paste0("2PA_pre_", params$dataset_date, ".fa")`*
+*Dataset used: `r paste0("2PA_pre_", params$dataset_date, ".fa")`*<br>
+*Pipeline version: `r pipeline_version`*

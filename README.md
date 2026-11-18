@@ -179,10 +179,17 @@ to missing scripts.
 | `scripts/blast_batch.sh` | Searches batch sequences against the local BLAST database. |
 | `scripts/build_per_seq_trees.sh` | Selects nearby sequences, aligns them, and builds per-sequence IQ-TREE trees. |
 | `scripts/build_batch_analysis.sh` | Builds batch phylogenies and SNP-distance results. |
-| `scripts/propose_variant_names.R` | Proposes variant names for batch sequences; writes `proposed_variants.tsv` (genotype, BLAST hit and its sample date, SNPs, proposed variant, notes). |
+| `scripts/propose_variant_names.R` | Proposes variant names for batch sequences; writes `proposed_variants.tsv` (genotype, BLAST hit and its sample date, SNPs, proposed variant, notes, pipeline version). |
 | `scripts/build_outbreak_trees.R` | Generates cluster phylogenetic trees using batch and database sequences; saves them under `cluster_trees/`. |
 | `scripts/batch_report.Rmd` | Renders the HTML report (including sample dates for BLAST hits and variants) and `summary.tsv`. |
 | `scripts/R-database.R` | Utility for importing, querying, and exporting external sequences in SQLite. |
+
+The pipeline version comes from `git describe --tags --always --dirty` and is
+included in the report footer and as the final column in `summary.tsv` and
+`proposed_variants.tsv`. A clean checkout at a release tag shows that tag (for
+example, `v1.0.0`); other commits show the distance from the nearest tag and
+commit hash, or just the commit hash if no tags are available. `-dirty` marks
+uncommitted changes.
 
 ## Runtime data
 
